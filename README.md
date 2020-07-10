@@ -1,5 +1,5 @@
 # Seychelles
-Here is the coda to proceed to the bioinformatic tools and statistical analyses for the Seychelles region.
+Here is the coda to proceed to the bioinformatic tools and statistical analyses for study of the enteric microbiome of reef fishes in the Seychelles islands.
 
 What's the study context? 
 
