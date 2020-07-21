@@ -1,0 +1,3136 @@
+---
+title: "Influence of the coral-macroalgal shift on compositions of microbial communities in seaweeds and enteric microbiomes of reef fish in Seychelles"
+subtitle : Data processes & analyses
+author: |
+  | Marie-Charlotte, Cheutin^a,1^, Jean-Christophe, Auguet^a^, Sebastien, Villeger^a^, & James, Robinson^b^.  
+  <p> </p> 
+  <font size="2"> ^a^ UMR Marbec,CNRS,IRD, Ifremer, Université de Montpellier, Batiment 24, Campus Triolet, Montpellier,34090 France</font>  
+  <font size="2"> ^b^ Lancaster University, Lancaster, U.K </font>  
+  <p> </p> 
+  <font size="3"> ^1^To whom correspondence should be addressed. E-mail: mccheutin@yahoo.es</font>  
+abstract: "Workflow to generate phyloseq objects, analyze data, and create figures for the influence of the coral-macroalgal shift in Seychelles on microbiomes of seaweeds and gut if reef fish. Here we report both methods and results in plain text and R code. You can choose to show all code or hide the code using the button in the upper right hand corner of the front page (default is hide) as well as download the .Rmd file to tweak the code."
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    keep_md: false
+    code_folding: hide
+    code_download: true
+    toc: TRUE
+    toc_float: true
+    toc_depth: 3
+    theme: cosmo
+    highlight: haddock
+    df_print: paged
+    number_sections: false
+  pdf_document: default
+#cool_themes: default, cerulean, cosmo, darkly, flatly, journal, lumen, sandstone, simplex, spacelab, united, yeti
+---
+
+```{r setup, eval = F}
+knitr::opts_chunk$set(eval = FALSE)
+remove(list = ls())
+cran_packages   <- c("knitr", "phyloseqGraphTest", "phyloseq", "shiny", "microbiome",
+                     "tidyverse", "miniUI", "caret", "pls", "e1071", "ggplot2", 
+                     "randomForest","entropart", "vegan", "plyr", "dplyr", "here",
+                     "ggrepel", "nlme", "R.utils", "gridExtra","grid", "googledrive", 
+                     "googlesheets", "phangorn", "devtools", "rmarkdown", "sys",
+                     "reshape2", "devtools", "PMA","structSSI","ade4", "ape",
+                     "Biostrings", "igraph", "ggnetwork", "intergraph", "ips",
+                     "scales", "kableExtra", "pgirmess", "treemap", "knitr","kableExtra",
+                     "rstudioapi" ,"data.table","DT","pander","formatR","grDevices","svgPanZoom",
+                     "RCurl","plotly","pairwiseAdonis", "stringr")
+github_packages <- c("jfukuyama/phyloseqGraphTest")
+bioc_packages   <- c("phyloseq", "genefilter", "impute", "dada2", "DECIPHER")
+# Install CRAN packages (if not already installed)
+#Some packages would be not availbale for your R version
+inst <- cran_packages %in% installed.packages()
+if (any(! inst)) {
+  install.packages(cran_packages[!inst], repos = "http://cran.rstudio.com/") }
+# 
+inst <- github_packages %in% installed.packages()
+if (any(! inst)) {
+  devtools::install_github(github_packages[!inst]) }
+
+# Load libraries
+sapply(c(cran_packages, bioc_packages), require, character.only = TRUE)
+sessionInfo()
+set.seed(1000)
+```
+
+```{r set_wd, echo=FALSE}
+knitr::opts_knit$set(root.dir = getwd())
+path = getwd()
+# This will setwd to wherever the .Rmd file is opened.
+dir_sample_selection <- paste0(path,"/analyses/01_select_samples/")
+dir_seq_processing   <- paste0(path,"/analyses/02_process_sequences/")
+dir_taxa_assign      <- paste0(path,"/analyses/03_assign_taxonomy/")
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/")
+dir_primers   <- paste0(path,"/dir_data_source/primers_sequences/")
+dir_refdb   <- paste0(path,"/dir_data_source/reference_databases/")
+dir_fastq_source <- paste0(path,"/dir_data_source/sequences/")
+```
+
+```{r mkdirs, echo=FALSE, eval=F}
+dir.create(dir_sample_selection, recursive = TRUE)
+dir.create(dir_seq_processing, recursive = TRUE)
+dir.create(dir_taxa_assign, recursive = TRUE)
+dir.create(dir_data_cleaning, recursive = TRUE)
+dir.create(dir_primers, recursive = TRUE)
+dir.create(dir_refdb, recursive = TRUE)
+dir.create(dir_fastq_source ,recursive =T) 
+```
+
+***
+
+## Preamble
+
+<style>
+div.blue { background-color:#FBDFB4; border-radius: 5px; padding: 20px;}
+</style>
+<div class = "blue">
+<font size="4">This document is  **interactive**. You can **sort and scroll** through most of the tables and the **phylogenetic tree is zoomable**. In the upper right hand corner of the front page is a `Code` button. Use this to show or hide all the code in the document (default is hide) as well as download the `.Rmd` file which you can use to extract the code. Data products from the final paper are highlighted in <font size="3" color="red">Red</font>.</font>
+</div>
+
+### Definitions & Abbreviations  
+
+* [Amplicon Sequence Variant](https://www.nature.com/articles/ismej2017119){target="_blank"} (**ASV**): Exact sequence variant---analogous to an OTU---but with single nucleotide resolution.  
+* [Core microbiome](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4817671/){target="_blank"}
+(**Core**): A dispersion index is calculated for each ASV as the ratio of the variance to the mean abundance multiplied by the occurrence :
+
+ $$ID_x = \frac{Variance_x}{\sum_{Abondance_x}}$$
+ 
+where $ID_x$ is the index of dispersion of the $ASV_x$.
+Each calculated index was compared to a Poisson distribution ([Magurran & Henderson, 2003](https://www.nature.com/articles/nature01547)), and tested whether they were included between the 2.5% and 97,5% confidence interval of the Khi^2^ distribution (Krebs, 1999). 
+
+* [**IR & HR**]{target="_blank"}: Impacted Reef and Healthy Reef conditions where **IRs** are reefs which have undergone a macroalgae invasion while **HRs** are reefs with a pre-bleaching disturbance state.   
+
+### Study goals
+1. Describe the distribution of the sampled fish and environmental pieces between reef conditions.
+2. Assess the taxonomic composition of intestinal communities from reef fish and from algae (turf and *Sargassum*).  
+3. Analyse the potential effect of the coral-macroalgal shift on their microbial communities.  
+4. Identify which determinants are the drivers of the microbial composition of the enteric microbiome of the reef fish.  
+
+***
+
+<a id="back to top"></a> 
+
+## Workflow overview
+
+#### [Part I: DADA2 process](#Part I: DADA2 process)
+
+The obtained reads from the sequencing platform (Genotoul, Toulouse) were demultiplexed and linkers with primers sequences were removed before being processed through [DADA2 pipeline](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4927377/){target="_blank"} (Callahan et al., 2016). Briefly, sequences were trimmed and filtered for quality, dereplicated and inferred in ASVs (Glassman & Martiny, 2018). Forward and reverse ASVs were merged and finally generated a count table where chimera were identified and removed. The taxonomy assignment was performed using the [SILVA reference database (*release 123*)](https://academic.oup.com/nar/article/41/D1/D590/1069277){target="_blank"} (Quast et al., 2013). A [phyloseq](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0061217){target="_blank"} object (McMurdie & Holmes, 2013) was generated for further statistical analysis. 
+
+#### [Part II: Phyloseq process](#Part II: Phyloseq process)
+
+To minimize the effect of contamination during the dissection, extraction and amplification steps, the ASVs taxonomically assigned to Eukarya Kingdom (< 0.1%), the organelles reads (Chloroplast and Mitochondria ) and to 40 kit contaminant genus described in [Salter et al. (2014)](https://bmcbiol.biomedcentral.com/articles/10.1186/s12915-014-0087-z) were removed from the database. Because of the high variability of sequencing depth, tables of ASVs were normalized based on the lowest number of sequences for each compartment (gut, macroalgae and turf). Thus, this part create several phyloseq object in order to use for the alpha and beta diversity.
+
+#### [Part III: Fish Community Composition between Reefs](#Part III: Fish Community Composition between Reefs) 
+
+Before analyzing the microbial compositions, we assess the host distribution between reefs. The macroalga shift has already been study to alter fish communities and trophic structure ([Burkepile & Hay, (2008)](https://www.pnas.org/content/105/42/16201) ; [Nyström et al., (2008)](https://link.springer.com/article/10.1007%2Fs00338-008-0426-z)). We first analyze our sampling results in order to underpinned the previous observations and to understand how microbiome is adapted to the health reef status.
+
+#### [Part IV: Determination and description of the enteric and algal core microbiomes](#Part IV: Determination and description of the enteric and algal core microbiomes)
+
+We first describe the core microbiome as microbiome constituted by theoritical permanent ASVs. I a first step, enteric and macro-algal core bacteriomes were independently identified by examining the species abundance distribution (SAD) patterns of each ASV and by partitioning the SAD into core and satellite ASVs ([Magurran & Henderson, 2003](https://www.nature.com/articles/nature01547)). For this purpose, the index of dispersion for each ASV was calculated as the ratio of the variance to the mean abundance (VMR) multiplied by the occurrence. 
+$$ID_x = \frac{Variance_x}{\sum_{Abondance_x}}$$
+ 
+where $ID_x$ is the index of dispersion of the $ASV_x$.
+This index was used to model whether lineages follow a Poisson distribution (i.e., stochastic distribution), falling between the 2.5 and 97.5% confidence interval of the χ2 distribution (Krebs, 1999). 
+Concerning the alpha diversity, tables were normalized with the abundance of the minimal sampling size. Richness observed and Shannon index were calculated and compared between both compartment. Then, the beta diversity was calculated with the normalized tables for both cores. A blast on the different ASVs was also made and ploted through Itol in order to determine the origin of the ASVs in the enteric and algal cores. Also, to detect the taxa descriptor of each compartment, we proceeded to a Linear Discriminant analyses on LefSe to detect which ASVs are biomarkers of each compartments ([Segata et al., 2011](https://www.ncbi.nlm.nih.gov/pubmed/21702898)).
+
+#### [Part V: Influence of the coral-macrolagal shift on microbial compositions](#Part V: Influence of the coral-macrolagal shift on microbial compositions) 
+
+In this part, we treated the main issue comparing the environmental samples and enteric core microbiomes from HRs and IRs with alpha diversity and beta diversity with PERMANOVA.
+Concerning the enteric microbiome, our sampling size permited to test four species (*Aprion virescens*, *Scarus ghobban*, *Lethrinus mahsena* and *Lethrinus enigmaticus*), two genus (*Lethrinus* sp., *Scarus* sp.) and one family (Lutjanidae).
+
+#### [Part VI: Other drivers of enteric microbial communities](#Part VI: Other drivers of enteric microbial communities)
+
+Finally, in order to determine which determinants are the drivers of the microbial composition of the enteric microbiome of the reef fish, we tested the effect of the phylogeny and the diet by comparing the herbivore and the invertivores. As for the [**Part IV**](#Part IV: Compositions of the microbiomes of *Sargassum*, turf and core gut), we generated a LDA in order to detect the microbial taxa biomarkers for each diet.
+
+> Ps: All tables and figures presented below were possibly modify before to be insert in the publication. We also include many additional data productes that were not part of the original publication.  
+
+***
+
+<a id="Part I: DADA2 process"></a>  
+
+## Part I: DADA2 process
+[back to top](#back to top)
+
+#### Preparation of your sequence
+First, you need to load the original R1 R2 reads in the **/dir_fastq_source** folder. Then, download the [SILVA database references](https://zenodo.org/record/1172783#.XpSB25MzZQI) into the **/dir_ref_db** folder. Concerning the primers **515F-Y** & **926R** used for this publication, their sequences are written right here. You can also write a .txt files for each primer you used and load it in the **/dir_primers** folder to call them when you need it.
+
+```{r primers description}
+primer_515FY <- "GTGYCAGCMGCCGCGGTAA"
+primer_926R <- "CCGYCAATTYMTTTRAGTTT"
+```
+
+We need to read the folders which contain our sequences,primers sequences, environmental dataset and references.
+```{r ref_folder, eval=FALSE}
+library(stringr)
+nms_seq_runs  <- list.files(dir_fastq_source)
+paths_seq_runs <- list.files(dir_fastq_source, full.names = TRUE) %>% setNames(nms_seq_runs)
+
+nms_refdb   <- list.files(dir_refdb)
+paths_refdb <- list.files(dir_refdb, full.names = TRUE) %>% setNames(nms_refdb)
+
+nms_primers   <- list.files(dir_primers)
+paths_primers <- list.files(dir_primers, full.names = TRUE) %>% setNames(nms_primers)
+```
+
+You have R1 and R2 reads with the corresponding sequencing names which can be very ugly.
+First, get the list of your samples and exctract the sample names: 
+```{r samples_list and names , eval=F}
+fns <- sort(list.files(dir_sample_selection, full.names = TRUE))
+fns <- fns[str_detect(basename(fns), ".fastq")]
+fns_R1 <- fns[str_detect(basename(fns), "R1")]
+fns_R2 <- fns[str_detect(basename(fns), "R2")]
+if(length(fns_R1) != length(fns_R2)) stop("Forward and reverse files do not match.")
+
+sample_names <- sapply(strsplit(basename(fns_R1), "_"), `[`, 1)
+sample_names
+```
+
+Once sample names cut, you can remove the primer sequence from your data by "counting" the number of nucleotides of each primer. Because nucleotides maybe me flowing, it not advised to remove the sequence of the primer by its nucleotide composition.
+```{r remove_primer_seq , eval = F}
+library(readr)
+primer_set_fwd <- read_lines(paste0(dir_primers, "primer_", "515F-Y" , ".txt"))
+primer_set_rev <- read_lines(paste0(dir_primers, "primer_", "926R", ".txt"))
+primer_length_fwd <- str_length(primer_set_fwd[2])
+primer_length_rev <- str_length(primer_set_rev[1])
+
+# You can also use the sequence of the {r primers description}
+```
+
+#### Quality profiles and filter/trim the sequences
+Now you can plot the quality profiles of your reads (which is usely better on the R1) in order to truncate the sequences before quality drastically decrease. Then, you can filter your sequences and trim the primer length. 
+
+```{r Quality profiles and filtering , eval = F}
+dir_quality_plots <- paste0(dir_seq_processing, "/quality_pdf/plots/")
+dir_create(dir_quality_plots , recursive = T)
+qual_R1 <- plotQualityProfile(fns_R1[1])
+qual_R2 <- plotQualityProfile(fns_R2[1])
+
+ggsave(qual_R1, file = paste0(dir_quality_plots , "quality_profile_R1.png"))
+ggsave(qual_R2, file = paste0(dir_quality_plots, "quality_profile_R2.png"))
+
+filt_R1 <- str_c(dir_filtered, sample_names, "_R1_filt.fastq")
+filt_R2 <- str_c(dir_filtered, sample_names, "_R2_filt.fastq")
+names(filt_R1) <- sample_names
+names(filt_R2) <- sample_names
+set.seed(1000)
+
+out <- filterAndTrim(fns_R1, filt_R1, fns_R2, filt_R2, truncLen=c(240,240),
+                     maxN=0, maxEE=c(2,2), truncQ=2, trimLeft=c(primer_length_fwd,primer_length_rev) , rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE)
+head(out)
+
+sample_names <- sapply(strsplit(basename(filt_R1), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
+sample_namesR <- sapply(strsplit(basename(filt_R2), "_"), `[`, 1) # Assumes filename = samplename_XXX.fastq.gz
+if(!identical(sample_names, sample_namesR)) stop("Forward and reverse files do not match.")
+names(filt_R1) <- sample_names
+names(filt_R2) <- sample_names
+set.seed(1000)
+```
+
+Finally, you can learn the error rates for both reads and save them. 
+```{r Learn the error rate,  eval = F}
+errF <- learnErrors(filt_R1,nbases=1e8, multithread=TRUE)
+errR <- learnErrors(filt_R2, nbases=1e8, multithread=TRUE)
+plotErrors_F <- plotErrors(errF, nominalQ=TRUE)
+plotErrors_R <- plotErrors(errR, nominalQ=TRUE)
+ggsave(plotErrors_F, file = paste0(dir_quality_plots , "plotErrors_F.png"))
+ggsave(plotErrors_R, file = paste0(dir_quality_plots, "plotErrors_R.png"))
+```
+
+> Ps:  If you have big data, please proceed directly at the [Part Ib: DADA2 process for BIG DATA](# Part Ib: DADA2 process for BIG DATA).
+
+#### Dereplication and merging sequences
+Now, we dereplicate the filtered reads in order to infer them in dada file to merge.
+
+```{r Dereplication & Inference , eval = F}
+#Dereplication step
+derepFs <- derepFastq(filt_R1, verbose=TRUE)
+derepRs <- derepFastq(filt_R2, verbose=TRUE)
+names(derepFs) <- sample_names
+names(derepRs) <- sample_names
+# Inference step
+dadaFs <- dada(derepFs, err=errF, multithread=TRUE, pool = T)
+dadaRs <- dada(derepRs, err=errR, multithread=TRUE, pool = T)
+dadaFs[[1]]
+dadaRs[[1]]
+# Merging step
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose=TRUE)
+head(mergers[[1]])
+```
+
+Now, we can construct our sequence table "seqtab" and remove chimeras. It is recommandable to track the reads through the pipeline process
+```{r construct sequence table & chimeras removing, eval = F}
+seqtab <- makeSequenceTable(mergers)
+row.names(seqtab) = sample_names
+dim(seqtab)
+table(nchar(getSequences(seqtab)))
+
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+sum(seqtab.nochim)/sum(seqtab)
+saveRDS(seqtab.nochim, paste0(dir_seq_processing,"seqtab.nochim.rds"))
+
+# ____ Track reads through the pipeline ----
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(mergers, getN), rowSums(seqtab), rowSums(seqtab.nochim))
+colnames(track) <- c("input", "filtered", "denoised", "merged", "tabled", "nonchim")
+rownames(track) <- sample_names
+head(track)
+save(track, file = "track_515F-Y_926R.RData")
+```
+
+*** 
+### Part Ib: DADA2 process for BIG DATA
+[back to top](#back to top)
+
+These chunks are highly recommendable if you have a huge mount of sequences !
+
+```{r Derep & Inference , eval = F}
+mergers <- vector("list", length(sample_names))
+names(mergers) <- sample_names
+for(sam in sample_names) {
+  cat("Processing:", sam, "\n")
+  derepFs <- derepFastq(filt_R1[[sam]])
+  ddF <- dada(derepFs, err=errF, multithread=TRUE)
+  derepRs <- derepFastq(filt_R2[[sam]])
+  ddR <- dada(derepRs, err=errR, multithread=TRUE)
+  merger <- mergePairs(ddF, derepFs, ddR, derepRs)
+  mergers[[sam]] <- merger
+}
+rm(derepFs); rm(derepRs)
+```
+Now the construction of the sequence table 
+```{r construct sequence table and chimeras removing, eval = F}
+seqtab <- makeSequenceTable(mergers)
+row.names(seqtab) = sample_names
+dim(seqtab)
+table(nchar(getSequences(seqtab)))
+
+saveRDS(seqtab, paste0(dir_seq_processing,"seqtab.rds"))
+
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "tabled")
+rownames(track) <- sample_names
+head(track)
+save(track, file = "table_track_A515F-Y_926R.RData")
+```
+
+And remove chimeras as the other part :
+```{r Remove chimeras, eval= F}
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+sum(seqtab.nochim)/sum(seqtab)
+saveRDS(seqtab.nochim, paste0(dir_seq_processing,"seqtab.nochim.rds"))
+```
+
+***
+#### Taxonomy assignment
+
+You have already load the SILVA ref files, then you have to assign from them the sequence tables
+```{r Tax assignment, eval = F}
+load(dir_seq_processing , "seqtab.nochim.rds")
+
+path_reference_db <- paste0(dir_refdb, "silva_nr_v132_train_set.fa.gz")
+path_species_db   <- paste0(dir_refdb, "silva_species_assignment_v132.fa.gz")
+taxaRC <- assignTaxonomy(seqtab.nochim, path_reference_db, tryRC=TRUE)
+taxaSp <- addSpecies(taxaRC, path_species_db) # This step can be very long
+
+taxa.print <- taxaSp # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+
+saveRDS(seqtab.nochim,taxaRC, taxaSp, file= paste0(dir_seq_processing,"dada2_files.rds"))
+```
+
+***
+<a id="Part II: Phyloseq process"></a> 
+
+## Part II: Phyloseq process
+[back to top](#back to top)
+
+Now you can create your phyloseq object with your filtered and assigned sequences. Before running the phyloseq process, you need to clean your worspace in order to free the r stack memory
+
+```{r setup2 , echo = F, warning=F, message = F, results = F}
+knitr::opts_chunk$set(eval = FALSE)
+remove(list = ls())
+cran_packages   <- c("knitr", "phyloseqGraphTest", "phyloseq", "shiny", "microbiome",
+                     "tidyverse", "miniUI", "caret", "pls", "e1071", "ggplot2", 
+                     "randomForest","entropart", "vegan", "plyr", "dplyr", "here",
+                     "ggrepel", "nlme", "R.utils", "gridExtra","grid", "googledrive", 
+                     "googlesheets", "phangorn", "devtools", "rmarkdown", "sys",
+                     "reshape2", "devtools", "PMA","structSSI","ade4", "ape",
+                     "Biostrings", "igraph", "ggnetwork", "intergraph", "ips",
+                     "scales", "kableExtra", "pgirmess", "treemap", "knitr","kableExtra",
+                     "rstudioapi" ,"data.table","DT","pander","formatR","grDevices","svgPanZoom",
+                     "RCurl","plotly","pairwiseAdonis", "stringr")
+github_packages <- c("jfukuyama/phyloseqGraphTest")
+bioc_packages   <- c("phyloseq", "genefilter", "impute", "dada2", "DECIPHER")
+# Install CRAN packages (if not already installed)
+#Some packages would be not availbale for your R version
+inst <- cran_packages %in% installed.packages()
+if (any(! inst)) {
+  install.packages(cran_packages[!inst], repos = "http://cran.rstudio.com/") }
+# 
+inst <- github_packages %in% installed.packages()
+if (any(! inst)) {
+  devtools::install_github(github_packages[!inst]) }
+
+# Load libraries
+sapply(c(cran_packages, bioc_packages), require, character.only = TRUE)
+sessionInfo()
+set.seed(1000)
+```
+
+And set_wd again 
+
+```{r set_wd2, echo = F, eval = T}
+knitr::opts_knit$set(root.dir = getwd())
+path = getwd()
+# This will setwd to wherever the .Rmd file is opened.
+dir_sample_selection <- paste0(path,"/analyses/01_select_samples/")
+dir_seq_processing   <- paste0(path,"/analyses/02_process_sequences/")
+dir_taxa_assign      <- paste0(path,"/analyses/03_assign_taxonomy/")
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/")
+dir_primers   <- paste0(path,"/dir_data_source/primers_sequences/")
+dir_refdb   <- paste0(path,"/dir_data_source/reference_databases/")
+dir_fastq_source <- paste0(path,"/dir_data_source/sequences/")
+```
+
+#### Phyloseq object creation
+
+We can create our phyloseq object from the seqtab.nochim file created previously.
+```{r phyloseq_creation , eval= F}
+load(paste0(dir_taxa_assign,"dada2_files.rds"))
+load(paste0(dir_taxa_assign,"seqtab.nochim_515F-Y.926R.RData"))
+
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE),tax_table(taxaRC)) 
+# You can use tax_table(taxaSp) if you need the assignment until species level
+```
+
+Now, we will modify our table with ASVs names 
+
+```{r ASVs names,  eval = F}
+dna <- Biostrings::DNAStringSet(taxa_names(ps))
+names(dna) <- taxa_names(ps)
+ps <- merge_phyloseq(ps, dna)
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
+ps
+save(ps, taxaRC,seqtab.nochim, seqtab, file=paste0(dir_taxa_assign ,"ps_515F-Y.926R.RData"))
+# First results 
+ntaxa(ps)
+nsamples(ps)
+sample_names(ps)[1:5]
+rank_names(ps)
+otu_table(ps)[1:5, 1:5]
+tax_table(ps)[1:5, 1:6]
+```
+
+
+#### Presentation of the envdata
+
+The envdata is constituted of the sampling data for the gut, algae and turf samples.
+* [**Tax_information**]{target="_blank"} : The informations concerning the species are written in different ways with **tax1** as the Species genus, **tax2** as the Species_genus nomenclature, **tax3** as the SPG_x which is the corresponding two first letters of the species and the first of the genus followed by the *x* of the sampled individuals in this species. The **type**, **lineage**, **Order**, **Family** ,**Genus** and **Species** are mentioned. 
+
+* [**Diet_information**]{target="_blank"}: The Diet is mentionned at high scale with the **diet3** and at granulous scales following the ecological traits in [Mouillot et al., (2014)](https://www.pnas.org/content/111/38/13757). The **diet4** mentionned the difference in the herbivory for the Scaridae, Acanthuridae and Siganidae species. Also, the trophic position is mentionned with [the FishBase reference](https://www.fishbase.se/search.php).
+
+* [**Individual_information**]{target="_blank"}: For each individual, the weight **mass**, total **length**, **gut mass** and **sex** were obtained.
+
+* [**Site_information**]{target="_blank"}: **Site** with the **GPS coordonates** were taken and the **geomorphology** were attributed to the condition of the reef.
+
+```{r envdata , eval = T, warning = FALSE, fig.align = "center"}
+envdata <- read.csv2(paste0(dir_refdb, "env.csv"))
+colnames(envdata)[1] = "ID"
+datatable(envdata[-c(3,6,10, 12)], rownames = FALSE, width = "100%",
+          colnames = c("ID", "Species","Species number" ,"Compartment","Order","Family","Genus","Diet abreviation","Diet High scale","Diet Low scale","Trophic position", "Mass (g)","Total Length (cm)","Gut mass (g)","Sex","Site","Reef condition","GPS latitude","GPS longitude", "Island", "Substrat"), 
+          caption = htmltools::tags$caption(style = "caption-side: 
+                                            bottom; text-align: left;", 
+                                            "Table: ", 
+                                            htmltools::em("Sample presentation.")), 
+          extensions = "Buttons", 
+          options = list(columnDefs = 
+                           list(list(className = "dt-left", targets = 0)), 
+                         dom = "Blfrtip", pageLength = 5, 
+                         lengthMenu = c(5, 10, 25, 50), 
+                         buttons = c("csv", "copy"), 
+                         scrollX = TRUE, scrollCollapse = TRUE))
+```
+
+It's just an parenthesis for ordering envdata depending of your phyloseq objects. It is a step a bit borring but necessary if your env file is not synchro with your phyloseq object, meaning that the samples names in your env file are not the same that your sample names in the phyloseq object. 
+First, we will order the names
+
+```{r Order the names , eval = F}
+load(paste0(dir_taxa_assign, "dada2_files.RData"))
+nochim_names <- rownames(seqtab.nochim)
+env_names <- as.character(envdata$ID)
+```
+
+
+Now, the aim is to have exactly the same names in the phyloseq object and in the env table. 
+```{r T or F , eval=F }
+lecture <- cbind(sort(nochim_names),sort(env_names))
+identical(lecture[,1], lecture[,2]) 
+```
+If it's **True**, you're names are the same, directly pass to the merging step; If **False**, you have to replace the correct names. Also, you have to check your env file with the names of your fish species, genus or family which could be incorrect. 
+
+```{r check the names of the tax fish, eval= F}
+levels(factor(envdata$family))
+levels(factor(envdata$species))
+```
+
+#### Merging data 
+
+Now that the seqtab and the envdata are corresponding, we will merge them into phyloseq object.
+
+```{r Merge envdata and phyloseq, eval=F}
+load(paste0(dir_taxa_assign,"ps_515F-Y.926R.RData"))
+envdata <- read.csv2(paste0(dir_refdb, "env.csv"))
+colnames(envdata)[1] = "ID"
+DAT <- sample_data(envdata)
+DAT
+sort(sample_names(DAT)) == sort(sample_names(ps)) # must be true to be merged
+
+ps1<- merge_phyloseq(ps, DAT)
+ps1
+save(ps1, envdata,file=paste0(dir_taxa_assign ,"ps1_515F-Y.926R.RData"))
+```
+
+Plot the sample minimum ASV 
+
+```{r sample minimum ASV , eval = F}
+min(rowSums(ps1@otu_table@.Data))
+readsumsdf = data.frame(nreads = sort(taxa_sums(ps1),TRUE), sorted = 1:ntaxa(ps1), type = "ASVs")
+readsumsdf = rbind(readsumsdf, data.frame(nreads = sort(sample_sums(ps1), TRUE), sorted = 1:nsamples(ps1), type = "Samples"))
+
+title = "Total number of reads"
+pdf(file = paste0(dir_quality_plots, "total_number_of_reads.pdf"), he = 7, wi = 7)
+p = ggplot(readsumsdf, aes(x = sorted, y = nreads)) + geom_bar(stat = "identity")
+p + ggtitle(title) + scale_y_log10() + facet_wrap(~type, 1, scales = "free")
+dev.off()
+```
+
+#### Phyloseq creation
+
+We will filter our ps1 to only keep the **Prokaryotes**
+
+```{r Prokaryotes_selection, eval = F}
+load(paste0(dir_taxa_assign, "ps1_515F-Y.926R.RData"))
+ps_sey_proka <- subset_taxa(ps_sey , Kingdom %in% c("Archaea", "Bacteria"))
+save(ps_sey_proka, file = paste0(dir_taxa_assign, "ps_sey_proka.RData"))
+```
+
+Then, we will obtain the phylogenetic distances between ASVs
+ The tree was obtained after aligning the sequences on mothur and was names "Sey.tree" and was load in the *\dir_taxa_assign* folder. The assignment was made against the ARB database available on SILVA database reference (v132) and proceeded on [**Mothur**](https://aem.asm.org/content/75/23/7537) platform.
+ 
+```{r read_tree , eval = F}
+sey_tree <- read.tree(paste(dir_taxa_assign, "Sey.tree"))
+sey_tree2 <- root(sey_tree, "ASV40619", resolve.root = T)
+sey_tree2 <- drop.tip(sey_tree2,"ASV40619" ) # To delete the outgroup ASV
+
+library(picante)
+cal1<-makeChronosCalib(sey_tree2, node = "root", age.min = 1, age.max = 1, interactive = FALSE, soft.bounds = FALSE) #calibration for ultrametric branchs.
+sey_chronogramme<-chronos(sey_tree2, lambda=0, model = "discrete", cal=cal1, quiet = FALSE, control=chronos.control(nb.rate.cat=1))
+save(sey_chronogramme ,file = paste0(dir_taxa_assign ,"sey_chronogramme.Rdata"))
+
+ps_sey_tree <- merge_phyloseq(ps_sey_proka, sey_tree2)
+save(ps_sey_tree, file = paste0(dir_taxa_assign, "ps_sey_tree.RData"))
+```
+ 
+Now that the phyloseq is only made by Prokaryotes which phylogenetic distances are associated, we will finally filter all organels (Chloroplast and Mitochondria) and potential contaminants of the exctraction kits and steps of amplification as mentionned in [Salter et al., 2014](https://bmcbiol.biomedcentral.com/articles/10.1186/s12915-014-0087-z).
+
+#### Clean the phyloseq object
+
+```{r Filter the contaminants and organels, eval = F}
+cont_list <- read.csv("/Users/marie-charlottecheutin/Drive/Thesis/Seychelles/WP5.3_data/data_sources/reference_databases/list_potential_contaminants.csv")
+contaminant <- cont_list$Genus
+sey_final <- subset_taxa(ps_sey_tree, Order != "Chloroplast")
+sey_final <- subset_taxa(sey_final , Family != "Mitochondria")
+sey_contaminant <- subset_taxa(sey_final , Genus %in% contaminant)
+save(sey_contaminant , file = paste0(dir_taxa_assign, "sey_contaminant.Rdata"))
+sey_final <- subset_taxa(sey_final , !Genus %in% contaminant)
+save(sey_final, file = paste0(dir_taxa_assign,"sey_final.RData"))
+seyrff_final  <- prune_samples(sample_sums(sey_final) >= min(sample_sums(sey_final)) , sey_final)
+seyrff_final <- rarefy_even_depth(seyrff_final, sample.size = min(sample_sums(sey_final)))
+save(seyrff_final, file = paste0(dir_taxa_assign, "seyrff_final.RData"))
+```
+
+Now we have the final phyloseq for all the samples, we can subset the phyloseq object for the gut, the algae and the turf and rarefy them. To be sure that the minimal abundance of the data set is enough to capture all the diversity, we use the function **ggrare()** 
+
+```{r ggrare function, eval = T}
+ggrare <- function(physeq_object, step = 10, label = NULL, color = NULL, plot = TRUE, parallel = FALSE, se = TRUE) {
+
+  x <- methods::as(phyloseq::otu_table(physeq_object), "matrix")
+  if (phyloseq::taxa_are_rows(physeq_object)) { x <- t(x) }
+## This script is adapted from vegan `rarecurve` function
+  tot <- rowSums(x)
+  S <- rowSums(x > 0)
+  nr <- nrow(x)
+
+  rarefun <- function(i) {
+    cat(paste("rarefying sample", rownames(x)[i]), sep = "\n")
+    n <- seq(1, tot[i], by = step)
+    if (n[length(n)] != tot[i]) {
+      n <- c(n, tot[i])
+    }
+    y <- vegan::rarefy(x[i, ,drop = FALSE], n, se = se)
+    if (nrow(y) != 1) {
+      rownames(y) <- c(".S", ".se")
+      return(data.frame(t(y), Size = n, Sample = rownames(x)[i]))
+    } else {
+      return(data.frame(.S = y[1, ], Size = n, Sample = rownames(x)[i]))
+    }
+  }
+  if (parallel) {
+    out <- parallel::mclapply(seq_len(nr), rarefun, mc.preschedule = FALSE)
+  } else {
+    out <- lapply(seq_len(nr), rarefun)
+  }
+  df <- do.call(rbind, out)
+
+  # Get sample data
+  if (!is.null(phyloseq::sample_data(physeq_object, FALSE))) {
+    sdf <- methods::as(phyloseq::sample_data(physeq_object), "data.frame")
+    sdf$Sample <- rownames(sdf)
+    data <- merge(df, sdf, by = "Sample")
+    labels <- data.frame(x = tot, y = S, Sample = rownames(x))
+    labels <- merge(labels, sdf, by = "Sample")
+  }
+
+  # Add, any custom-supplied plot-mapped variables
+  if ( length(color) > 1 ) {
+    data$color <- color
+    names(data)[names(data) == "color"] <- deparse(substitute(color))
+    color <- deparse(substitute(color))
+  }
+
+  if ( length(label) > 1 ) {
+    labels$label <- label
+    names(labels)[names(labels) == "label"] <- deparse(substitute(label))
+    label <- deparse(substitute(label))
+  }
+
+  p <- ggplot2::ggplot(data = data,
+                       ggplot2::aes_string(x = "Size",
+                                           y = ".S",
+                                           group = "Sample",
+                                           color = color))
+
+  p <- p + ggplot2::labs(x = "Sequence Sample Size", y = "Species Richness")
+
+  if (!is.null(label)) {
+    p <- p + ggplot2::geom_text(data = labels,
+                                ggplot2::aes_string(x = "x",
+                                                    y = "y",
+                                                    label = label,
+                                                    color = color),
+                       size = 4, hjust = 0)
+  }
+
+  p <- p + ggplot2::geom_line()
+  if (se) { ## add standard error if available
+    p <- p +
+      ggplot2::geom_ribbon(ggplot2::aes_string(ymin = ".S - .se",
+                                               ymax = ".S + .se",
+                                               color = NULL,
+                                               fill = color),
+                           alpha = 0.2)
+  }
+  if (plot) {
+    plot(p)
+  }
+  invisible(p)
+}
+```
+And now use it and create the phyloseq objects
+
+#### Subset the phyloseq objects
+
+```{r phyloseq subset, eval= T, warning = FALSE,message = F, results = "hide"}
+load(paste0(dir_taxa_assign, "sey_final.RData"))
+# Fish ps 
+sey_gut <- subset_samples(sey_final, type == "gut")
+sey_gut <- prune_taxa(names(which(colSums(sey_gut@otu_table)>0)), sey_gut)
+save(sey_gut, file = paste0(dir_taxa_assign, "sey_gut.RData"))
+sort(sample_sums(sey_gut))
+set.seed(10000)
+p_gut <- ggrare(sey_gut, step = 500, color = "geomorpho", label = "tax1", se = FALSE)
+seyrff_gut <- prune_samples(sample_sums(sey_gut) >= min(sample_sums(sey_gut)) , sey_gut)
+seyrff_gut <- rarefy_even_depth(seyrff_gut, sample.size = min(sample_sums(sey_gut)))
+save(seyrff_gut, file = paste0(dir_taxa_assign, "seyrff_gut.RData"))
+# Algae ps 
+sey_algae <- subset_samples(sey_final, tax1 %in% c("macroalgae", "turf"))
+sey_algae <- prune_taxa(names(which(colSums(sey_algae@otu_table)>0)), sey_algae)
+save(sey_algae, file = paste0(dir_taxa_assign, "sey_algae.RData"))
+set.seed(10000)
+p_algae <- ggrare(sey_algae, step = 500, color = "geomorpho", label = "tax1", se = FALSE)
+seyrff_algae <- prune_samples(sample_sums(sey_algae) >= min(sample_sums(sey_algae)) , sey_algae)
+seyrff_algae <- rarefy_even_depth(seyrff_algae, sample.size = min(sample_sums(sey_algae)))
+save(seyrff_algae, file = paste0(dir_taxa_assign, "seyrff_algae.RData"))
+```
+
+***
+<a id="Part III: Fish Community Composition between Reefs"></a>  
+
+## Part III: Fish Community Composition between Reefs
+[back to top](#back to top)
+
+Here again, we will remove all the object to clean the memory 
+```{r setup3 , echo = F , eval = T,  message= F,warning=F, results= F}
+knitr::opts_chunk$set(eval = FALSE)
+remove(list = ls())
+cran_packages   <- c("knitr", "phyloseqGraphTest", "phyloseq", "shiny", "microbiome",
+                     "tidyverse", "miniUI", "caret", "pls", "e1071", "ggplot2", 
+                     "randomForest","entropart", "vegan", "plyr", "dplyr", "here",
+                     "ggrepel", "nlme", "R.utils", "gridExtra","grid", "googledrive",
+                     "googlesheets", "phangorn", "devtools", "rmarkdown", "sys",
+                     "reshape2", "devtools", "PMA","structSSI","ade4", "ape",
+                     "Biostrings", "igraph", "ggnetwork", "intergraph", "ips",
+                     "scales", "kableExtra", "pgirmess", "treemap", "knitr","kableExtra",
+                     "rstudioapi" ,"data.table","DT","pander","formatR","grDevices","svgPanZoom",
+                     "RCurl","plotly","pairwiseAdonis", "stringr")
+github_packages <- c("jfukuyama/phyloseqGraphTest")
+bioc_packages   <- c("phyloseq", "genefilter", "impute", "dada2", "DECIPHER")
+# Install CRAN packages (if not already installed)
+#Some packages would be not availbale for your R version
+inst <- cran_packages %in% installed.packages()
+if (any(! inst)) {
+  install.packages(cran_packages[!inst], repos = "http://cran.rstudio.com/") }
+# 
+inst <- github_packages %in% installed.packages()
+if (any(! inst)) {
+  devtools::install_github(github_packages[!inst]) }
+
+# Load libraries
+sapply(c(cran_packages, bioc_packages), require, character.only = TRUE)
+sessionInfo()
+set.seed(1000)
+```
+
+And set_wd again 
+
+```{r set_wd3, echo = F, eval = T, warning=F, message = F}
+knitr::opts_knit$set(root.dir = getwd())
+path = getwd()
+# This will setwd to wherever the .Rmd file is opened.
+dir_sample_selection <- paste0(path,"/analyses/01_select_samples/")
+dir_seq_processing   <- paste0(path,"/analyses/02_process_sequences/")
+dir_taxa_assign      <- paste0(path,"/analyses/03_assign_taxonomy/")
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/")
+dir_primers   <- paste0(path,"/dir_data_source/primers_sequences/")
+dir_refdb   <- paste0(path,"/dir_data_source/reference_databases/")
+dir_fastq_source <- paste0(path,"/dir_data_source/sequences/")
+```
+
+In this is part, we will focus on our sampling dataset and analyze the distribution of the hosts between the IRs and HRs.
+
+```{r load_files, eval = T, results="hide", warning= F}
+envdata <- read.csv2(paste0(dir_refdb, "env.csv"))
+colnames(envdata)[1] = "ID"
+load(paste0(dir_taxa_assign, "sey_gut.RData"))
+load(paste0(dir_taxa_assign, "sey_final.RData"))
+```
+
+We will first write the table of the species and their corresponding diet.
+
+```{r table_sp_diet, eval= T, warning = FALSE, fig.align = "center", message=F}
+diet_sp <- as.data.frame(table(envdata$diet4, envdata$tax1))[which(as.data.frame(table(envdata$diet4, envdata$tax1))[,3]> 0),][,c(1,2)]
+sp_reef <- table(envdata$tax1, envdata$geomorpho)
+sp_reef <- cbind(as.data.frame(sp_reef[,1]), as.data.frame(sp_reef[,2]))
+table_diet_sp <- cbind(diet_sp[,2],diet_sp[,1],sp_reef[,c(1,2)])
+
+table_to_print <- rbind(table_diet_sp[-c(26,37),], table_diet_sp[c(26,37),])
+datatable(table_to_print, rownames = F, width = "100%",
+          colnames = c("Species", "Diet", "HR","IR"),
+          caption = htmltools::tags$caption(style = "caption-side: 
+                                            bottom; text-align: left;", 
+                                            "Table: ", 
+                                            htmltools::em("Sampling table of the species and diet between reefs.")), 
+          extensions = "Buttons", 
+          options = list(columnDefs = 
+                           list(list(className = "dt-left", targets = 0)), 
+                         dom = "Blfrtip", pageLength = 5, 
+                         lengthMenu = c(5, 10, 25, 50), 
+                         buttons = c("csv", "copy"), 
+                         scrollX = TRUE, scrollCollapse = TRUE))
+```
+
+##### PCoA on fish community
+
+The distribution of the sampling set is a first result showing the influence of the shift on the fish communities. How are they distributed?
+
+```{r PCoA_family, eval= T , warning = F, message= F, fig.align= "center"}
+samp_data <- envdata[envdata$type=="gut",]
+fam_tab <- table(samp_data$site,samp_data$family)
+
+# Transform to log
+fam.log <- log1p(fam_tab)  # Equivalent: log(fam_tab + 1)
+# Principal coordinate analysis and simple ordination plot
+fam.D <- vegdist(fam.log, "bray")
+res <- pcoa(fam.D)
+#res$values
+biplot(res, fam.log)
+#round(res$values$Relative_eig[1]*100, 1) # 57.8 %
+#round(res$values$Relative_eig[2]*100, 1) # 26 %
+
+site1 <- c("C1","C2","C3","C4", "M1","M2","M3")
+site2 <- c(rep("coral", 4), rep("macroalgal",3))
+site_data <- cbind(site1,site2)
+colnames(site_data) <- c("site", "geomorpho")
+site_data <- as.data.frame(site_data)
+
+adonis(fam.D ~ geomorpho, data = site_data)
+beta_reef <- betadisper(fam.D, site_data$geomorpho)
+permutest(beta_reef)
+```
+
+Now, we will do the same on trophic srtucture with the diet
+
+```{r PCoA_diet,eval= T , warning = F, message= F, fig.align="center"}
+samp_data <- envdata[envdata$type=="gut",]
+diet_tab <- table(samp_data$site,samp_data$diet4)
+# Transform to log
+diet.log <- log1p(diet_tab)  # Equivalent: log(diet_tab + 1)
+# Principal coordinate analysis and simple ordination plot
+diet.D <- vegdist(diet.log, "bray")
+res <- pcoa(diet.D)
+#res$values
+par(mfrow=c(1,2))
+biplot(res, diet.log)
+#round(res$values$Relative_eig[1]*100, 1) # 74.1 %
+#round(res$values$Relative_eig[2]*100, 1) # 17.8 %
+
+site1 <- c("C1","C2","C3","C4", "M1","M2","M3")
+site2 <- c(rep("coral", 4), rep("macroalgal",3))
+site_data <- cbind(site1,site2)
+colnames(site_data) <- c("site", "geomorpho")
+site_data <- as.data.frame(site_data)
+
+adonis(diet.D ~ geomorpho, data = site_data)
+beta_reef <- betadisper(diet.D, site_data$geomorpho)
+permutest(beta_reef)
+```
+
+Because we will focus our sutdy on herbivores and invertivores, we need to know if families are equally distributed.
+
+```{r PCoA_inv,eval= T , warning = F, message= F,fig.align="center"}
+samp_data_inv <- samp_data[samp_data$diet4 == "Mobile invertebrate",]
+fam_tab <- table(samp_data_inv$site,samp_data_inv$family)
+# Transform to log
+fam.log <- log1p(fam_tab)  # Equivalent: log(fam_tab + 1)
+# Principal coordinate analysis and simple ordination plot
+fam.D <- vegdist(fam.log, "bray")
+res <- pcoa(fam.D)
+#res$values
+biplot(res, fam.log)
+#round(res$values$Relative_eig[1]*100, 1) # 57.8 %
+#round(res$values$Relative_eig[2]*100, 1) # 26 %
+
+site1 <- c("C1","C2","C3","C4", "M1","M2","M3")
+site2 <- c(rep("coral", 4), rep("macroalgal",3))
+site_data <- cbind(site1,site2)
+colnames(site_data) <- c("site", "geomorpho")
+site_data <- as.data.frame(site_data)
+
+adonis(fam.D ~ geomorpho, data = site_data)
+beta_reef <- betadisper(fam.D, site_data$geomorpho)
+permutest(beta_reef)
+```
+
+***
+<a id="Part IV: Determination and description of the enteric and algal core microbiomes"></a>  
+
+## Part IV: Determination and description of the enteric and algal core microbiomes
+[back to top](#back to top)
+
+### Colors
+
+Microbial community of fish is very high and it is very difficult to discern less than 10 taxa. That's why, we kept the same color for the same taxa, in order to be able to compare the graphs between compartemtn, diet or fish families. Of course, if your are only interested in some taxa, better choose few colors. For the bigger table (*i.e* tax table at Order level), **distinctColorPalette()** could be very useful but be awared that colors are not repeated.  Here is the code : 
+
+```{r colors , echo = T , eval = T}
+phylum_colors <- c('Acidobacteria'='lavenderblush4',
+                   'Actinobacteria'='darkblue',
+                   'Armatimonadetes'='cadetblue3',
+                   'Bacteroidetes'='cornflowerblue',
+                   'Calditrichaeota'='azure3',
+                   'Chloroflexi'='#DCE1D2',
+                   'Cyanobacteria'='#DE6554',
+                   'Dadabacteria'='brown2',
+                   'Deferribacteres'='darkslategray1',
+                   'Deinococcus-Thermus'='salmon4',
+                   'Dependentiae'='sandybrown',
+                   'Epsilonbacteraeota'='darkslateblue',
+                   'Elusimicrobia'='plum1',
+                   'Euryarchaeota'='hotpink4',
+                   'Firmicutes'='brown4',
+                   'Fusobacteria'='orange',
+                   'Gemmatimonadetes'='darkolivegreen',
+                   'Kiritimatiellaeota'='darkkhaki',
+                   'Marinimicrobia_(SAR406_clade)'='darkgoldenrod4',
+                   'Latescibacteria'='darkseagreen2',
+                   'Lentisphaerae'='darkseagreen4',
+                   'Patescibacteria'='darkturquoise',
+                   'Planctomycetes'='darkslategray',
+                   'Proteobacteria'='aquamarine4',
+                   'Spirochaetes'='darkolivegreen3',
+                   'Tenericutes'='#CA8EA7',
+                   'Thaumarchaeota'='gold3',
+                   'Verrucomicrobia'='darkgreen',
+                   'WPS-2'='thistle2',
+                   'Other'= 'black',
+                   'Z-Other' = 'black')
+
+class_colors <- c("Acidimicrobiia"="darksalmon",
+                  "Acidobacteriia"="lavenderblush4",
+                  "Actinobacteria"="darkblue",
+                  "Alphaproteobacteria"="lightseagreen",
+                  "Babeliae"="peachpuff",
+                  "Anaerolineae"="tomato2",
+                  "Bacilli"="brown4",
+                  "Bacteroidia"="cornflowerblue",
+                  "Brachyspirae"="darkolivegreen2",
+                  "Campylobacteria"="royalblue",
+                  "Clostridia"="orange3",
+                  "Coriobacteriia"="deepskyblue4",
+                  "Deferribacteres"="darkslategray1",
+                  "Deinococci"="skyblue3",
+                  "Deltaproteobacteria"="skyblue4",
+                  "Erysipelotrichia"="yellow",
+                  "Fusobacteriia"="orange",
+                  "Fimbriimonadia" = "darkseagreen",
+                  "Gammaproteobacteria"="aquamarine4",
+                  "Kiritimatiellae"="darkgray",
+                  "Lentisphaeria"="darkseagreen4",
+                  "Microgenomatia"="seashell3",
+                  "Mollicutes"="#CA8EA7",
+                  "Negativicutes"="palevioletred4",
+                  "Nitrososphaeria"="sandybrown",
+                  "Oxyphotobacteria"="#DE6554",
+                  "Phycisphaerae"="rosybrown4",
+                  "Planctomycetacia"="darkslategray",
+                  "Rhodothermia"="cornsilk3",
+                  "Spirochaetia"="darkolivegreen3",
+                  "Thermoanaerobaculia"="purple",
+                  "Thermoleophilia"="deeppink4",
+                  "Verrucomicrobiae"="darkgreen")
+
+#library(randomcoloR)
+#n <- length(levels(core_physeq_order$Order))
+#order_colors <- distinctColorPalette(n)
+```
+
+
+***
+
+Let's analyze our data previously proceeded. In order to descrimine which ASVs are rare (transients) and which would be considered as permanent (core), we use a dispersion index for each ASV and compare it at the Poisson distribution to determine which ASVs are signifcantly randomly distributed (transiant) and which are not (core) following the method of [Fillol et al. (2016)](https://www.nature.com/articles/ismej2015143).
+
+*** 
+### Part IVa: Enteric core microbiome
+[back to top](#back to top)
+
+We create a new folder for the enteric microbiome of reef fish 
+and determine the core.
+
+```{r enteric core wd, echo = T, eval = T, warning=F, message = F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Core/")
+dir.create(dir_data_cleaning, recursive = T)
+load(paste0(dir_taxa_assign, "sey_gut.RData"))
+load(paste0(dir_taxa_assign, "seyrff_gut.RData"))
+```
+
+#### Core determination
+
+```{r enteric core determination, echo = T, eval = T, warning=F, message = F}
+library(labdsv)
+otu_table <- seyrff_gut@otu_table@.Data
+abuoccplot_otu <- abuocc(otu_table)
+#sub_objects of abuocc objects
+str(abuoccplot_otu)
+# transform spc.plt vector into table in order to calculate specific richness
+richness_otu <- data.frame(abuoccplot_otu$spc.plt)
+# occurence of each OTU
+otu_occurence <- data.frame(abuoccplot_otu$plt.spc)
+mean.abun_otu <- colSums(otu_table)/otu_occurence
+square_otu <- otu_table^2
+ss_otu <- data.frame(colSums(square_otu))
+# Variance calculation
+variance_otu=ss_otu/otu_occurence-mean.abun_otu^2
+disp_otu <- (variance_otu/mean.abun_otu)*otu_occurence
+# IC calculation for Poisson distribution using Chi square distribution (value and formula within Zar p574)
+library(epitools)
+poisic_otu = pois.exact(otu_occurence, conf.level = 0.95)
+gut_dstat_otu <- cbind(mean.abun_otu, disp_otu, otu_occurence, poisic_otu)
+names(gut_dstat_otu) <- c("average","disp", "occurence", "x", "pt", "rate", "lower", "upper", "prob")
+save(gut_dstat_otu, file=paste0(dir_data_cleaning, "gut_sey_dstat_asv.RData"))
+# Selection of core ASVs
+gut_sey_core_otu <- gut_dstat_otu[gut_dstat_otu$disp > gut_dstat_otu$upper,]
+gut_sey_core_otu <- na.exclude(gut_sey_core_otu)
+gut_tax <- data.frame(seyrff_gut@tax_table@.Data)
+gut_sey_core_otu$tax <- gut_tax[rownames(gut_tax) %in% row.names(gut_sey_core_otu),6]
+gut_sey_core_otu$phylum <- gut_tax[rownames(gut_tax) %in% row.names(gut_sey_core_otu),2]
+save(gut_sey_core_otu, file = paste0(dir_data_cleaning,"gut_sey_core_otu.Rdata"))
+
+sey_gut_core <-prune_taxa(rownames(gut_sey_core_otu), seyrff_gut)
+save(sey_gut_core, file = paste0(dir_data_cleaning, "sey_gut_core.RData"))
+```
+
+To blast the reads of the core, we need to generate a fasta file with the function `writeXStringSet()`.
+
+```{r fasta enteric file, echo = F, eval = F, warning=F, message = F}
+gut_names <- colnames(sey_gut_core@otu_table)
+gut_tree <- subset_taxa(sey_gut_core, rownames(sey_gut_core@tax_table) %in% gut_names)
+gut_tree
+Biostrings::writeXStringSet(sey_gut_core@refseq, file = paste0(dir_data_cleaning,"sey_gut_core.fasta"))
+```
+
+#### Composition of the core
+
+```{r gut composition stackplot, echo = F, eval = T, warning=F, message = F}
+library(dplyr)
+gut_core_order <- sey_gut_core %>%
+  tax_glom(taxrank = "Order") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance > 0.02) %>%                         # Filter out low abundance taxa
+  arrange(Order)      
+
+save(gut_core_order , file = paste0(dir_data_cleaning, "gut_core_order.RData"))
+```
+
+
+Plot a treemap of the core thanks to the `treemap()` function for the main contributor of the core. 
+
+```{r treemap of the enteric core , eval= T , warning = F, message= F, fig.align= "center" }
+gut_core_order$Phylum = as.character(gut_core_order$Phylum) # Avoid error message with factor for next step
+sort(table(factor(gut_core_order$Phylum)), T)
+gut_core_order[!gut_core_order$Phylum %in% c("Proteobacteria","Bacteroidetes","Cyanobacteria","Firmicutes","Planctomycetes", "Spirochaetes", "Verrucomicrobia","Fusobacteria","Tenericutes"),which(names(gut_core_order) == "Phylum", T)] <- "Other" #Change phylum to other for those not included in the list
+
+group <-  gut_core_order$Phylum
+subgroup <- gut_core_order$Order
+value <- gut_core_order$Abundance
+
+gut_core_treemap_data=data.frame(group,subgroup,value)
+
+library(treemap)
+gut_core_treemap <- treemap(gut_core_treemap_data,
+                            index=c("group","subgroup"), vSize = "value", type = "index",
+                            fontcolor.labels=c("white","black"),
+                            fontsize.labels=c(12),bg.labels=c("transparent"),
+                            fontface.labels=c(2,3),
+                            border.col=c("black","white"), border.lwds=c(4,2), 
+                            align.labels=list(c("center", "center"),c("left", "bottom")),
+                            title="Seychelles Enteric Core Treemap",fontsize.title=12,
+                            fontfamily.title ="serif")
+
+```
+
+and visualize the relative contribution of the different taxa (with the `fill=` argument for the level of the taxonomy you want represent) for the different reef condition or site with the argument `x=`.
+
+*Ex* : The composition of the enteric core microbiome between reef fish families at phylum level. 
+
+```{r stackedplot of the enteric core, echo= F, eval= T , warning = F, message= F, fig.align= "center" }
+gut_core_order$Phylum <- str_replace_all(gut_core_order$Phylum,c("Other" = "Z-Other"))
+
+ggplot(gut_core_order, aes(x = family , y = Abundance, fill = Phylum)) + 
+  geom_bar(stat="identity", position="fill") + 
+  ylab("Relative Abundance (Order > 2%)") +
+  xlab("Family")+
+  scale_y_continuous(expand = c(0,0)) + #remove the space below the 0 of the y axis in the graph
+  ggtitle("Phylum Composition of Core Enteric Microbiome") +
+  scale_fill_manual(values = phylum_colors) +
+  theme_bw() +
+  theme(axis.line = element_line(size = 0), 
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(), 
+        axis.title = element_text(family = "serif",size = 15), 
+        axis.text = element_text(size = 14), 
+        axis.text.x = element_text(size = 12, family = "serif", angle = 45,vjust = 0.65), 
+        axis.text.y = element_text(family = "serif", size = 13), 
+        plot.title = element_text(family = "serif", size = 15), 
+        legend.text = element_text(size = 10,  family = "serif"), 
+        legend.title = element_text(size = 12, family = "serif"))
+```
+
+#### Core ratio
+
+To have a representation of the size of the core in the entire community, we can calculate the ratio of the sequences. This can give us informations on the inter individual dispersion : the higher the intra-species dispersion, the lower the size of the core and the larger the variable bacterial community of the compartment or species. 
+
+```{r Ratio ASV enteric Core/ ASV initial , echo= T, eval= T , warning = F, message= F, fig.align= "center"}
+ratio_gut <- sum(sample_sums(sey_gut_core)) / sum(sample_sums(seyrff_gut))
+percent(ratio_gut)
+```
+
+#### Itol
+
+In order to represent the taxa in the whole microbial description via Blast, we can then represent the source of our sequence (where they have already been described) in an interactive tree in [Itol](https://itol.embl.de/) (Interactive Tree of Life). To do that, we need to transform our phylogenetic tree from the phyloseq object (obtained after an alignement in ARB here) in an xml output thanks to the `write_xml()` function. 
+
+```{r to insert an tree, eval = F , echo= T , warning = F, message = F}
+devtools::install_github("USCBiostats/rphyloxml")
+library(ape)
+library(rphyloxml)
+set.seed(12)
+gut_tree <- sey_gut_core@phy_tree
+gut_phyloxml <- write_phyloxml(gut_tree)
+cat(as.character(gut_phyloxml))
+xml2::write_xml(gut_phyloxml, "gut_phyloxml.xml")
+```
+
+Then, in order to add supplementary envdata (other than Blast, as a gradient, host species, geography etc....) you have to use a special template .txt for Itol. The function `create_itol_files(env.xlsx)` from the script [table2itol.R](https://github.com/mgoeker/table2itol/blob/master/table2itol.R) is very useful to made automatically the templates from your env file. You are free to change the colors and shape as you want next. It faster than made a manually entry in the Itol website. 
+
+***
+
+### Part IVb: Algal core microbiome
+[back to top](#back to top)
+
+We create a new folder for the algal microbiome and determine the core.
+
+```{r algal core wd, echo = T, eval = T, warning=F, message = F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Algae/Core/")
+dir.create(dir_data_cleaning, recursive = T)
+load(paste0(dir_taxa_assign, "sey_algae.RData"))
+load(paste0(dir_taxa_assign, "seyrff_algae.RData"))
+```
+
+#### Core determination
+
+```{r algal core determination, echo = T, eval = T, warning=F, message = F}
+library(labdsv)
+otu_table <- seyrff_algae@otu_table@.Data
+abuoccplot_otu <- abuocc(otu_table)
+#sub_objects of abuocc objects
+str(abuoccplot_otu)
+# transform spc.plt vector into table in order to calculate specific richness
+richness_otu <- data.frame(abuoccplot_otu$spc.plt)
+# occurence of each OTU
+otu_occurence <- data.frame(abuoccplot_otu$plt.spc)
+mean.abun_otu <- colSums(otu_table)/otu_occurence
+square_otu <- otu_table^2
+ss_otu <- data.frame(colSums(square_otu))
+# Variance calculation
+variance_otu=ss_otu/otu_occurence-mean.abun_otu^2
+disp_otu <- (variance_otu/mean.abun_otu)*otu_occurence
+# IC calculation for Poisson distribution using Chi square distribution (value and formula within Zar p574)
+library(epitools)
+poisic_otu = pois.exact(otu_occurence, conf.level = 0.95)
+algae_dstat_otu <- cbind(mean.abun_otu, disp_otu, otu_occurence, poisic_otu)
+names(algae_dstat_otu) <- c("average","disp", "occurence", "x", "pt", "rate", "lower", "upper", "prob")
+save(algae_dstat_otu, file=paste0(dir_data_cleaning, "algae_sey_dstat_asv.RData"))
+# Selection of core ASVs
+algae_sey_core_otu <- algae_dstat_otu[algae_dstat_otu$disp > algae_dstat_otu$upper,]
+algae_sey_core_otu <- na.exclude(algae_sey_core_otu)
+algae_tax <- data.frame(seyrff_algae@tax_table@.Data)
+algae_sey_core_otu$tax <- algae_tax[rownames(algae_tax) %in% row.names(algae_sey_core_otu),6]
+algae_sey_core_otu$phylum <- algae_tax[rownames(algae_tax) %in% row.names(algae_sey_core_otu),2]
+save(algae_sey_core_otu, file = paste0(dir_data_cleaning,"algae_sey_core_otu.Rdata"))
+
+sey_algae_core <-prune_taxa(rownames(algae_sey_core_otu), seyrff_algae)
+save(sey_algae_core, file = paste0(dir_data_cleaning, "sey_algae_core.RData"))
+```
+
+To blast the reads of the core, we need to generate a fasta file with the function `writeXStringSet()`.
+
+```{r fasta algal file, echo = F, eval = F, warning=F, message = F}
+algae_names <- colnames(sey_algae_core@otu_table)
+algae_tree <- subset_taxa(sey_algae_core, rownames(sey_algae_core@tax_table) %in% algae_names)
+algae_tree
+Biostrings::writeXStringSet(sey_algae_core@refseq, file = paste0(dir_data_cleaning,"sey_algae_core.fasta"))
+```
+
+#### Composition of the core
+
+```{r algal composition stackplot, echo = F, eval = T, warning=F, message = F}
+library(dplyr)
+algae_core_order <- sey_algae_core %>%
+  tax_glom(taxrank = "Order") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance > 0.02) %>%                         # Filter out low abundance taxa
+  arrange(Order)      
+
+save(algae_core_order , file = paste0(dir_data_cleaning, "algae_core_order.RData"))
+```
+
+
+Plot a treemap of the core thanks to the `treemap()` function for the main contributor of the core. 
+```{r treemap of the core epiphyte, eval= T , warning = F, message= F, fig.align= "center" }
+algae_core_order$Phylum = as.character(algae_core_order$Phylum) # Avoid error message with factor for next step
+sort(table(factor(algae_core_order$Phylum)), T)
+algae_core_order[!algae_core_order$Phylum %in% 
+                   c("Proteobacteria", "Bacteroidetes","Cyanobacteria","Verrucomicrobia","Planctomycetes"),which(names(algae_core_order) == "Phylum", T)] <- "Other" #Change phylum to other for those not included in the list
+
+group <-  algae_core_order$Phylum
+subgroup <- algae_core_order$Order
+value <- algae_core_order$Abundance
+
+algae_core_treemap_data=data.frame(group,subgroup,value)
+
+library(treemap)
+algae_core_treemap <- treemap(algae_core_treemap_data,
+                            index=c("group","subgroup"), vSize = "value", type = "index",
+                            fontcolor.labels=c("white","black"),
+                            fontsize.labels=c(12),bg.labels=c("transparent"),
+                            fontface.labels=c(2,3),
+                            border.col=c("black","white"), border.lwds=c(4,2), 
+                            align.labels=list(c("center", "center"),c("left", "bottom")),
+                            title="Seychelles Algae Core Treemap",fontsize.title=12,
+                            fontfamily.title ="serif")
+
+```
+
+and visualize the relative contribution of the different taxa (with the `fill=` argument for the level of the taxonomy you want represent) for the different reef condition or site with the argument `x=`.
+
+*Ex* : The composition of the core algal microbiome between Mahe and Praslin at phylum level. 
+
+```{r stackedplot f the core epiphyte, echo= F, eval= T , warning = F, message= F, fig.align= "center" }
+algae_core_order$Phylum <- str_replace_all(algae_core_order$Phylum,c("Other" = "Z-Other"))
+
+ggplot(algae_core_order, aes(x = site, y = Abundance, fill = Phylum)) + 
+  geom_bar(stat="identity", position="fill") + 
+  ylab("Relative Abundance (Order > 2%)") +
+  scale_y_continuous(expand = c(0,0)) + #remove the space below the 0 of the y axis in the graph
+  ggtitle("Phylum Composition of Algae between sites") +
+  xlab("Site")+
+  scale_fill_manual(values = phylum_colors) +
+  theme_bw() +
+  theme(axis.line = element_line(size = 0), 
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(), 
+        axis.title = element_text(family = "serif",size = 15), 
+        axis.text = element_text(size = 14), 
+        axis.text.x = element_text(size = 12, family = "serif"), 
+        axis.text.y = element_text(family = "serif", size = 13), 
+        plot.title = element_text(family = "serif", size = 15), 
+        legend.text = element_text(size = 10,  family = "serif"), 
+        legend.title = element_text(size = 12, family = "serif"))
+```
+
+#### Core ratio
+
+To have a representation of the size of the core in the entire community, we can calculate the ratio of the sequences. This can give us informations on the inter individual dispersion : the higher the intra-species dispersion, the lower the size of the core and the larger the variable bacterial community of the compartment or species. 
+
+```{r Ratio ASV Core/ ASV initial , echo= T, eval= T , warning = F, message= F, fig.align= "center"}
+ratio_algae <- sum(sample_sums(sey_algae_core)) / sum(sample_sums(seyrff_algae))
+percent(ratio_algae)
+```
+***
+
+### Part IVc: Global core and comparison
+[back to top](#back to top)
+
+We create a new folder for the total core microbiome and compare both compatment in composition (LefSe) and in diversity (alpha and beta).
+
+
+```{r total core wd, echo = T, eval = T, warning=F, message = F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Total Core/")
+dir.create(dir_data_cleaning, recursive = T)
+load(paste0(dir_taxa_assign, "sey_final.RData"))
+load(paste0(dir_taxa_assign, "seyrff_final.RData"))
+```
+
+We use the otu tables of the enteric core and algal core to keep the ASVs names and subset them in the initial phyloseq object `sey_final`.
+
+```{r global core creation ,echo= T, eval= T , warning = F, message= F, }
+core_ASV <- unique(c(row.names(gut_sey_core_otu), row.names(algae_sey_core_otu)))
+global_core <- subset_taxa(sey_final, taxa_names(sey_final) %in% core_ASV)
+save(global_core, file = paste0(dir_data_cleaning, "global_core.RData"))
+
+core_physeq_order <- global_core %>%
+  tax_glom(taxrank = "Order") %>%                     # agglomerate at order level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  arrange(Order)
+save(core_physeq_order , file = paste0(dir_data_cleaning, "core_physeq_order.RData"))
+```
+
+
+Now we can visualize easily by compartments the bacterial composition with the chosen taxa levels (e.g. Phylum here). 
+
+```{r stacked plot of the global core,echo= F, eval= T , warning = F, message= F, fig.align= "center" }
+core_physeq_order$lineage <- str_replace_all(core_physeq_order$lineage, c("plantae" = "Algae", "vertebrate"="Gut"))
+
+ggplot(core_physeq_order, aes(x = lineage , y = Abundance, fill = Phylum)) + 
+  geom_bar(stat="identity", position="fill") + 
+  scale_fill_manual(values = phylum_colors) +
+  ylab("Relative Abundance (Phylum > 2%)") +
+  scale_y_continuous(expand = c(0,0)) + #remove the space below the 0 of the y axis in the graph
+  ggtitle("Core Phylum Composition between Gut and Algae") +
+  theme_bw() +
+  xlab("Family")+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.background = element_blank(), 
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank())  + 
+  theme(axis.line = element_line(size = 0), 
+        axis.title = element_text(family = "serif",size = 15), 
+        axis.text = element_text(size = 14), 
+        axis.text.x = element_text(size = 12, family = "serif", angle = 0), 
+        axis.text.y = element_text(family = "serif", size = 13), 
+        plot.title = element_text(family = "serif", size = 15), 
+        legend.text = element_text(size = 10,  family = "serif"), 
+        legend.title = element_text(size = 12, family = "serif"))
+```
+
+#### Alpha diversity comparisons
+
+We compare the taxonomic diversity (observed richness and exp(shannon index) for the effective number of species (ENS)) between the normalized tables (478 ASVs normalized) of the enteric microbiome and epiphytes bacteria. Note that 478 was chosen because Lethrinus samples were very poor but essential for the comparisons between health status of the reef. Following the richness curves made higher during the [Phyloseq process](#Part II: Phyloseq process)
+
+```{r global alpha diversity,echo= F, eval= T , warning = F, message= F, fig.align= "center"  }
+box1 = plot_richness(seyrff_final , measures = c("Observed","Shannon") , color = "lineage")
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)<- c("Richness observed", "Shannon (ENS)")
+box1$data$lineage <- str_replace_all(box1$data$lineage, c("plantae" = "Algae", "vertebrate"="Gut"))
+
+library(ggsignif)
+
+palette = c("darkgreen" , "darkorange")
+
+sey_final_alpha_div =  ggplot(box1$data, aes(x = lineage , y = value, color = lineage)) +
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) + theme_bw() +
+  scale_colour_manual(values= palette) +
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=18, family = "serif"),
+        axis.text = element_text(family = "serif",size = 14),
+        axis.text.x = element_text(family = "serif",size = 18, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.text.x = element_text(size=12, family = "serif"),
+        legend.position="none") + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("Algae", "Gut")), 
+              map_signif_level = TRUE, textsize=6, color="black", family = "serif", vjust = 0.5)
+sey_final_alpha_div
+
+library(pgirmess)
+MW.richness = wilcox.test(box1$data$value[box1$data$variable =="Richness observed"] ~ box1$data$lineage[box1$data$variable=="Richness observed"], method = "bonferroni")
+MW.richness = cbind(MW.richness$statistic , MW.richness$p.value)
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"] ~ box1$data$lineage[box1$data$variable=="Shannon (ENS)"], method = "bonferroni")
+MW.shannon = cbind(MW.shannon$statistic , MW.shannon$p.value)
+# Plot the results  
+MW.test <- rbind(MW.richness, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+#### Beta diversity comparisons
+
+Even we work on the core of normalized tables, we calculate the beta diversity ont the relative ASVs counts with the Bray-curtis distances with `vegdist` function from [vegan package (Oksanen et al., 2019)](https://CRAN.R-project.org/package=vegan).
+
+```{r global beta diversity,echo= F, eval= T , warning = F, message= F, fig.align= "center" }
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Total Core/")
+load(paste0(dir_data_cleaning, "global_core.RData"))
+global_core_rel <- transform_sample_counts(global_core, function(x) x / sum(x) )
+save(global_core_rel, file = paste0(dir_data_cleaning, "global_core_rel.RData"))
+# PCOA coda & Permanova
+library(vegan)
+otu <- vegdist(global_core_rel@otu_table, method = "bray")
+save(otu, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(otu)
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+save(pcoa.sub,pcoa_coord ,file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+library(stringr)
+samp_data <- data.frame(sample_data(global_core_rel))
+names(samp_data)[6] = "Type"
+hull <- cbind(pcoa_coord, samp_data)
+hull$Type <- str_replace_all(hull$Type, c("plantae" = "Algae", "vertebrate"="Gut"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) # 8.6 %
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) # 6.6 %
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3])) # 5.1 %
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4])) # 4.9 %
+palette = c("darkgreen", "darkorange")
+
+# Plot
+pcoa.bray <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  scale_color_manual(values = palette) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = Type), alpha = 0.7, size = 5, shape = 16) +
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20, family = "serif"), # remove y-axis labels
+        axis.text.x = element_text(size=18, family = "serif"),
+        axis.text.y = element_text(size=18, family = "serif"),
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(family = "serif", size = 16), 
+        legend.text = element_text(size = 20, family = "serif"),
+        legend.title = element_text(size = 0,family = "serif"))+
+  labs(colour = "Type", fill = "Type")
+
+pcoa.bray
+```
+
+We then compare the beta diversity with the `adonis` function and test the dispersion between samples with `betadisper`. 
+
+```{r Permanova and Betadisper, echo= T, eval= T , warning = F, message= F, fig.align= "center"}
+library(pairwiseAdonis)
+adonis(otu ~ Type, data = samp_data) # between gut, macroalgae and turf
+pairwise.adonis(otu , samp_data$Type)
+
+beta <- betadisper(otu, samp_data$Type)
+permutest(beta)
+```
+
+#### LEfSe on compartments
+
+In order to detect biomarkers proper to each compartment, we proceed to a [Linear discriminant analysis on effect size (LEfSe) available on Galaxy](https://galaxyproject.org/learn/visualization/custom/lefse/). Here is the code to prepare the data input to proceed in Galaxy hub. 
+
+```{r LDA wd, echo= F, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Total Core/LDA/")
+dir.create(dir_data_cleaning, recursive = T)
+```
+
+```{r LEfSe preparation data, echo= F, eval= F, warning = F, message= F}
+sey_compartment.genus <- tax_glom(global_core, "Genus", NArm = TRUE) #merges species that have the same Genus + filtre Genres NA
+save(sey_compartment.genus, file = paste0(dir_data_cleaning, "sey_compartment.genus.RData")) 
+taxo = data.frame(tax_table(sey_compartment.genus))
+tax_name <- paste(taxo$Domain, taxo$Phylum, taxo$Class, taxo$Order, taxo$Family, taxo$Genus,  sep="|")
+tax_name2 <- c("Type",tax_name)
+save(taxo, tax_name2, file=paste0(dir_data_cleaning , "sey_compartment.genus_taxo.RData"))
+samp_data <- data.frame(sample_data(sey_compartment.genus))
+levels(samp_data$lineage) <- c("Algae", "Gut")
+type_lefse <- data.frame(samp_data[,6], stringsAsFactors = FALSE)
+otu = data.frame(otu_table(sey_compartment.genus))
+
+lefse <- cbind(type_lefse, otu)
+lefse2 <- cbind(tax_name2,t(lefse))
+write.table(lefse2, file=paste0(dir_data_cleaning, "lefse_type_sey.txt"), 
+            sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+```
+
+Proceed the "lefse_type_sey.txt" in a LEfse Galaxy and retrieve data "LDA Effect Size" with the associated "Plot LEfSe Results" in the LDA folder.You have to rename the former file "LDA_results" and run the following code. 
+
+```{r write LDA results,echo = T, eval= F, warning = F, message= F} 
+library(plyr)
+LDA_Effect_Size <- read.delim(paste0(dir_data_cleaning, "LDA_results"), header=FALSE)
+LDA_gut <- subset(LDA_Effect_Size , LDA_Effect_Size$V3 == "Gut")
+LDA_algae <- subset(LDA_Effect_Size , LDA_Effect_Size$V3 == "Algae")
+LDA_type <- rbind(LDA_gut,LDA_algae)
+LDA_phylum <- LDA_type$V1
+names(LDA_phylum) <- ".Phylum.Class.Order.Family.Genus"
+write.table(LDA_phylum, file=paste0(dir_data_cleaning, "LDA_phylum.txt"), sep="\t", row.names=F, col.names=F, quote=FALSE)
+#paste the names(LDA_phylum) in excel then read it again.
+
+library(readr)
+LDA_phylum <- read_delim(paste0(dir_data_cleaning, "LDA_phylum.txt"),".", escape_double = FALSE, col_types = cols(X1 = col_skip()),trim_ws = TRUE)
+
+#It will transform it in tabble and convert "." by separator 
+LDA_phylum_type <- cbind(LDA_phylum , LDA_type[,2:5])
+colnames(LDA_phylum_type) <- c(names(LDA_phylum)[1:5] , "LDA_res" , "Type" , "LDA_res2" , "sig")
+write.table(LDA_phylum_type, file=paste0(dir_data_cleaning, "LDA_phylum_type.txt"), sep="\t", row.names=F, col.names=T, quote=FALSE)
+LDA_phylum_type <- read_delim(paste0(dir_data_cleaning, "LDA_phylum_type.txt"),"\t", escape_double = FALSE, trim_ws = TRUE)
+# Select your significativ value and taxa
+LEFSE_sig <- subset(LDA_phylum_type, LDA_phylum_type$LDA_res2 >= 3)
+LEFSE_sig_genus <- subset(LEFSE_sig, LEFSE_sig$Genus %in% as.character(na.exclude(LEFSE_sig$Genus)))
+table(LEFSE_sig_genus$Type)
+LEFSE_sig_genus_vec <- paste(LEFSE_sig_genus$Phylum, LEFSE_sig_genus$Class, LEFSE_sig_genus$Order, LEFSE_sig_genus$Family, LEFSE_sig_genus$Genus, sep = "|")
+
+biomarkers <- paste(LEFSE_sig_genus$Order, LEFSE_sig_genus$Genus, sep = "|")
+save(biomarkers, file = paste0(dir_data_cleaning, "biomarkers.RData"))
+
+#sey_samp <- sey_compartment.genus@sam_data
+#write.table(sey_samp, file=paste0(dir_data_cleaning, "sey_samp.txt"), sep="\t", row.names=F, col.names=T, quote=FALSE) # You need to numerate the tax3 name for the turf and sargassum samples and re-read it. 
+sey_samp <- read_table2(paste0(dir_data_cleaning, "sey_samp.txt"))
+sample_data(sey_compartment.genus)$tax3 <- sey_samp$tax3
+levels(sample_data(sey_compartment.genus)$lineage) <- c("Algae", "Gut")
+
+physeq_phylum <- sey_compartment.genus %>%    
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%  
+  filter(Abundance > 0) %>% # Melt to long format
+  arrange(Genus)
+
+physeq_phylum$Abundance <- physeq_phylum$Abundance/nrow(sample_data(sey_compartment.genus))
+
+physeq_phylum$tax <- paste(physeq_phylum$Phylum, physeq_phylum$Class, physeq_phylum$Order, physeq_phylum$Family, physeq_phylum$Genus, sep = "|")
+save(physeq_phylum, file= paste0(dir_data_cleaning, "physeq_phylum.RData"))
+write.table(physeq_phylum ,file = paste0(dir_data_cleaning, "physeq_phylum.txt"), sep="\t",quote = F)
+
+Diet_Pol_sey <- physeq_phylum
+Diet_Pol_sey$tax <-  paste(Diet_Pol_sey$Order, Diet_Pol_sey$Genus, sep = "|")
+length(physeq_phylum$tax)
+
+df_sey <- Diet_Pol_sey[,c("lineage","Sample","tax","Abundance")]
+colnames(df_sey) <- c("family","item","score","value")
+save(df_sey, file = paste0(dir_data_cleaning, "df_sey.RData"))
+```
+
+Let's organize our data to plot corresponding colours depending on the  compartment. 
+
+```{r polarhistogram on compartment, echo = T, eval= T, warning = F, message= F}
+load(paste0(dir_data_cleaning , "df_sey.RData"))
+load(paste0(dir_data_cleaning , "biomarkers.RData"))
+
+library(plyr)
+print_biomarkers <- levels(factor(df_sey[df_sey$score %in% biomarkers,]$score)) # All biomarkers present in the sey.compartment_genus RData file
+others <- levels(factor(df_sey[!df_sey$score %in% biomarkers,]$score)) # All taxa which are not biomarkers
+df_sey[!df_sey$score %in% biomarkers,]$score <- "Z-Other" # Call them other (Z to figure at the end of the list)
+
+# Some biomarkers are in common so Output the frequences.
+freq_gut <- table(df_sey[df_sey$family == "Gut",]$score)/length(df_sey[df_sey$family == "Gut",]$score)*100 
+freq_gut <- freq_gut[!names(freq_gut) == "Z-Other"]
+freq_algae <- table(df_sey[df_sey$family == "Algae",]$score)/length(df_sey[df_sey$family == "Algae",]$score)*100 
+freq_algae <- freq_algae[!names(freq_algae) == "Z-Other"]
+
+# Keep the common biomarkers of the algae and gut and the respective frequencies in each compartment
+biom_common <- names(freq_algae[which(names(freq_algae) %in% names(freq_gut))])
+freq_gut_common <- as.data.frame(freq_gut[names(freq_gut) %in% biom_common])
+freq_algae_common <- as.data.frame(freq_algae[names(freq_algae) %in% biom_common])
+freq_common <- cbind(freq_gut_common, freq_algae_common$Freq)
+colnames(freq_common) <- c("Biomarkers", "Freq_gut" ,"Freq_algae")
+# Class the biomarkers in the compartment where the value is the higher
+biom_gut_to_keep <- freq_common$Biomarkers[which(freq_common$Freq_gut > freq_common$Freq_algae, T)]
+biom_algae_to_keep <- freq_common$Biomarkers[which(freq_common$Freq_algae > freq_common$Freq_gut, T)]
+# See which are the biomarkers for the gut and which are the biomarkers for the algae
+biom_gut <- levels(factor(df_sey[df_sey$family == "Gut",]$score))
+biom_gut <- biom_gut[!biom_gut == "Z-Other"]
+biom_gut <- biom_gut[!biom_gut %in% biom_algae_to_keep]
+biom_algae <- levels(factor(df_sey[df_sey$family == "Algae",]$score))
+biom_algae <- biom_algae[!biom_algae == "Z-Other"]
+biom_algae <- biom_algae[!biom_algae %in% biom_gut_to_keep]
+
+# Color choice
+algae_colors <- c("darkgreen" , "darkkhaki", "darkolivegreen",
+                  "darkolivegreen2","forestgreen","chartreuse",
+                  "aquamarine","aquamarine3", "darkcyan",
+                  "darkseagreen", "yellowgreen", "darkslategray",
+                  "gold3", "gold4", "goldenrod",
+                  "gold","palegreen4","chartreuse3",
+                  "palegreen3", "seagreen3","palegoldenrod","yellow")
+pie(rep(1, 22), col= algae_colors)
+
+gut_colors <- c("brown", "brown1", "burlywood4",
+                "chocolate","chocolate4", "coral2",
+                "darksalmon","darkred","darkorchid4",
+                "darkmagenta", "blueviolet","darkblue",
+                "blue3", "deeppink4","deeppink")
+pie(rep(1, 15), col= gut_colors)
+polar_col <- c(algae_colors , gut_colors , 'Z_Other'="black")
+# Add a prefix G (for gut) or A (for algae) in their respectiv biomarkers. In this way, they will be listed following 
+# their respectiv compartment and no their names (easier for the add of the color in the ggplot)
+df_sey[df_sey$score %in% biom_gut,]$score <- paste("G",df_sey[df_sey$score %in% biom_gut,]$score, sep= "-")
+df_sey[df_sey$score %in% biom_algae,]$score <- paste("A",df_sey[df_sey$score %in% biom_algae,]$score, sep= "-")
+```
+
+We use the script of [Ladroue et al.,(2012)](http://dx.doi.org/10.1038/ng.1073.) to draw the histogram with the `polarHistogram` function available [here](https://github.com/burakaydin/materyaller/blob/master/mugla_ejeR/polarHistogram.R).
+
+```{r Print the polarhistogramm, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+source(paste0(dir_refdb, "polarHistogram.R"))
+p <- polarHistogram(df_sey , familyLabel=T, innerRadius = 0.2, spaceFamily =7, circleProportion = 0.85)
+p + ggplot2::scale_fill_manual(values= polar_col) +
+  theme(legend.text = element_text(family = "serif", size = 3)) +
+  theme(legend.position= "none") # to hide the legend because of the size
+```
+
+#### Conclusion
+<style>
+div.blue { background-color:#FBDFB4; border-radius: 5px; padding: 20px;}
+</style>
+<div class = "blue">
+<font size="4"> The microbial compositions between algae and the gut of reef fish is very different with many **aerobic groups for the macroalgae and most of all anaerobic for the enteric core microbiomes**. The blast analyses confirm the source of our ASVs which are mainly associated with animal host marine microbiomes. Their role have been described as important in the function of **nutrition** (*e.g.* Vibrionales, Clostridiales).
+A first observation remains of the very **high and impressive variability** between enteric core microbiomes. Now, we wonder what would be the origin of a such variability by testing the *diet*, the *taxonomic effect* and the *effect of the environment* as possible determinant of the variability of the microbiome.
+</div>
+
+<a id="Part V: Influence of the coral-macrolagal shift on microbial compositions"></a> 
+
+## Part V: Influence of the coral-macrolagal shift on microbial compositions
+[back to top](#back to top)
+
+Our main issue is to *determine if the shift coral-macroalgal in the Seychelles reefs would influence the composition of the core microbiome of their inhabitants*. To test that, we will first analyse the influence on the environmental microbiome through the algae. Then, because a modification of the microbial environment would directly modify the microbiome of their consummer (here, the herbivores and indirectly the invertivores), we will test the effect of the shift on these both communities. We saw that core microbiome was highly variable between individuals. The taxonomic effect is already known to be a major determinant in the microbial composition in fishes. That is why, we will test the influence of the shift at different taxonomical levels (family, genus and species) when the sampling size was sufficient.
+
+### Part Va : Shift impact on the core microbiome of Algae
+[back to top](#back to top)
+
+We will first create once again a new folder for the effect of the shift and other environmental parameters and test both on alpha and beta diversity.
+
+```{r shift algae wd ,echo = T, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Algae/Shift/")
+dir.create(dir_data_cleaning, recursive = T)
+```
+
+#### Alpha diversity
+```{r alpha-div algae by shift, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+load(paste0(dir_taxa_assign, "seyrff_algae.RData"))
+box1 = plot_richness(seyrff_algae , measures = c("Observed","Shannon") , color = "geomorpho")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+box1$data$geomorpho <- str_replace_all(box1$data$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkblue","darkred")
+
+sey_algae_alpha_div =  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + 
+  theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 18, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=12, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), 
+              map_signif_level = TRUE, textsize=5, color="black", family = "serif")
+
+sey_algae_alpha_div
+# ____ Test MW ----
+library(pgirmess)
+# Does exist differences in diversity between types of host? 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+#### Beta diversity 
+```{r beta-div algae, echo = T, eval= T, warning = F, message= F, fig.align="center" }
+load(paste0(path, "/analyses/04_data_cleaning/Algae/Core/sey_algae_core.RData"))
+core_algae_rel <- transform_sample_counts(sey_algae_core, function(x) x / sum(x) )
+save(core_algae_rel , file = paste0(dir_data_cleaning, "core_algae_rel.RData"))
+
+library(vegan)
+library(ape)
+otu <- vegdist(core_algae_rel@otu_table, method = "bray")
+save(otu, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(otu)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_algae_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+palette = c("darkblue","darkred")
+pcoa <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = geomorpho), alpha = 0.7, size = 3, shape = 17) +
+  scale_color_manual(values = palette)+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=14), # remove x-axis labels
+        axis.title.y = element_text(size=14), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank()) + theme(axis.title = element_text(family = "serif", size = 14), 
+                                                   legend.text = element_text(size = 11, family = "serif"),
+                                                   legend.title = element_text(size = 11,family = "serif")) +
+  labs(colour = "Site", fill = "Reef")
+pcoa
+
+# _____ Permanovas and Betadisper  ------
+samp_data <- read_delim(paste0(dir_data_cleaning,"samp_data.txt"),"\t", escape_double = FALSE, trim_ws = TRUE)
+```
+
+Let's test the different microbial compositions in function of the geomorphology of the site (coral or macroalgal cover), the site and the substrata. 
+
+```{r algal env1 , echo = T, eval= T, warning = F, message= F }
+# Between geomorpho, site , substrat
+adonis(otu ~ geomorpho, data = samp_data)
+adonis(otu ~ site, data = samp_data)
+adonis(otu ~ substrat, data = samp_data)
+```
+
+Because we had two types of macroalgae, and overall two different clades (brown macroalgae with the *Sargassum* and a green macroalgae with the turf)n, we tested if the environment would always plays a role inside a type of algae. 
+
+```{r algal env2 , echo = T, eval= T, warning = F, message= F}
+adonis(otu ~ type/geomorpho, strata= samp_data$type, data = samp_data)
+adonis(otu ~ type/site, strata= samp_data$type, data = samp_data)
+adonis(otu ~ type/substrat, strata= samp_data$type, data = samp_data)
+adonis(otu ~ type/island, strata= samp_data$type, data = samp_data)
+```
+
+
+### Part Vb : Shift impact on the enteric core microbiome of Reef fish
+[back to top](#back to top)
+
+#### **Herbivores**
+
+We have 3 families of herbivores : the scrappers Scaridae and the browsers Acanthuridae and Siganidae. Unfortunately, the only individuals present in the impacted shifted sites were three *Scarus ghobban*.
+Nevertheless, we tried to determine which were the other determinant in each components and test the effect of other environmental parameters. 
+
+#### Herbivorous community
+
+```{r herb wd, echo = T, eval= T, warning = F, message= F }
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/Herb/")
+dir.create(dir_data_cleaning, recursive = T)
+```
+
+We need to subset from the `sey_gut` phyloseq object the herbivorous fishes. 
+
+```{r herb physeq creation ,echo = T, eval= T, warning = F, message= F }
+herb_ps <- subset_samples(sey_gut, diet3 == "Herbivorous")
+herb_ps <- prune_taxa(names(which(colSums(herb_ps@otu_table)>0)), herb_ps)
+save(herb_ps, file = paste0(dir_data_cleaning, "herb_ps.RData"))
+rff_herb <- prune_samples(sample_sums(herb_ps) >= min(sample_sums(herb_ps)) , herb_ps)
+rff_herb <- rarefy_even_depth(herb_ps ,min(sample_sums(herb_ps)))
+save(rff_herb , file = paste0(dir_data_cleaning, "rff_herb.RData"))
+herb_core <- subset_samples(sey_gut_core, diet3 == "Herbivorous")
+herb_core <- prune_taxa(names(which(colSums(herb_core@otu_table)>0)), herb_core)
+save(herb_core, file = paste0(dir_data_cleaning, "herb_core.RData"))
+```
+
+##### Alpha and beta diversity
+```{r alpha herb, echo = T, eval= T, warning = F, message= F, fig.align= "center"}
+box1 = plot_richness(rff_herb , measures = c("Observed","Shannon") , color = "geomorpho")
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+palette = c("darkblue","darkred")
+sey_herb_alpha_div=  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 24, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), map_signif_level = TRUE,
+              textsize=5, color="black", family = "serif", vjust = 0.1)
+
+sey_herb_alpha_div 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+```{r beta herb, echo = T, eval= T, warning = F, message= F, fig.align= "center"}
+core_herb_rel <- transform_sample_counts(herb_core, function(x) x / sum(x) )
+save(core_herb_rel  , file = paste0(dir_data_cleaning, "core_herb_rel.RData"))
+# _____ PCOA coda & permanova ------
+matrix <- vegdist(core_herb_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_herb_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+#write.table(samp_data, file = paste0(dir_data_cleaning, "samp_data.txt"), quote = F, sep = "\t")
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_herb <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = geomorpho, shape = family), alpha = 0.7, size = 8) +
+  scale_color_manual(values = palette)+
+  scale_shape_manual(values = c(16,17,18))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Reef")
+pcoa_herb
+```
+
+Permanova on the only effect of the geomorpho but there is a lot of variability...
+```{r permanova herb1, echo = T, eval= T, warning = F, message= F}
+adonis(matrix ~ geomorpho, data = samp_data)
+```
+
+PERMANOVAs on the taxonomic effect between  genus and species within families
+
+```{r permanova herb2, echo = T, eval= T, warning = F, message= F}
+adonis(matrix ~ family/genus/tax1, strata= samp_data$family, data = samp_data)
+```
+And between species/site , between species/geomorpho, and species/substrata inside families
+```{r permanova herb3, echo = T, eval= T, warning = F, message= F}
+adonis(matrix ~ tax1/site, strata= samp_data$family, data = samp_data)
+adonis(matrix ~ tax1/geomorpho, strata= samp_data$family, data = samp_data)
+adonis(matrix ~ tax1/substrat, strata= samp_data$family, data = samp_data)
+```
+
+There is a significant effect of the taxonomic effect even at family level. To erase this effect, we focused our tests on Scaridae members. 
+
+#### Scaridae family
+
+```{r scaridae family wd , echo = T, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/Scaridae/")
+dir.create(dir_data_cleaning, recursive = T)
+
+scaridae_ps <- subset_samples(sey_gut, family == "Scaridae")
+scaridae_ps <- prune_taxa(names(which(colSums(scaridae_ps@otu_table)>0)), scaridae_ps)
+save(scaridae_ps, file = paste0(dir_data_cleaning, "scaridae_ps.RData"))
+scaridaerff <- prune_samples(sample_sums(scaridae_ps) >= min(sample_sums(scaridae_ps)) , scaridae_ps)
+scaridaerff <- rarefy_even_depth(scaridae_ps ,min(sample_sums(scaridae_ps)))
+save(scaridaerff , file = paste0(dir_data_cleaning, "scaridaerff.RData"))
+scar_core <- subset_samples(sey_gut_core, family == "Scaridae")
+scar_core <- prune_taxa(names(which(colSums(scar_core@otu_table)>0)), scar_core)
+save(scar_core, file = paste0(dir_data_cleaning, "scar_core.RData"))
+```
+
+#### Alpha and beta diversity
+
+```{r alpha scaridae, echo = T, eval= T, warning = F, message= F, fig.align= "center"}
+box1 = plot_richness(scaridaerff , measures = c("Observed","Shannon") , color = "geomorpho")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+palette = c("darkblue","darkred")
+
+sey_scaridae_alpha_div=ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 24, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), map_signif_level = TRUE, textsize=5, color="black", family = "serif")
+
+sey_scaridae_alpha_div 
+
+# ____ Test MW ----
+library(pgirmess)
+# Does exist differences in diversity between types of host? 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+```{r beta scaridae, echo = T, eval= T, warning = F, message= F, fig.align= "center"}
+scar_core_rel <- transform_sample_counts(scar_core, function(x) x / sum(x) )
+save(scar_core_rel  , file = paste0(dir_data_cleaning, "scar_core_rel.RData"))
+# _____ PCOA coda & permanova ------
+matrix <- vegdist(scar_core_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(scar_core_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+#write.table(samp_data , file = paste0(dir_data_cleaning, "samp_data.txt"), sep = "\t", quote = F)
+
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_scaridae <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = tax1, shape = site), alpha = 0.7, size = 8) +
+  scale_shape_manual(values = c(15:19))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Reef", shape = "Site")
+pcoa_scaridae
+```
+
+We will test the effect of the taxonomical levels (genus and species)
+
+```{r permanova scar1, echo = T, eval= T, warning = F, message= F}
+adonis(matrix ~ tax1,data = samp_data)
+adonis(matrix ~ genus, data = samp_data)
+```
+
+Because there is a high taxonomic effect, we will "freeze" the genus effect to test the environmental effect (meaning that we test the substrate, geomorpho and site effect inside each genus). Even species have significantly different core microbial composition, We couldn't test inside species level because we many species were only represented by one individual.
+
+```{r permanova scar2, echo = T, eval= T, warning = F, message= F}
+adonis(matrix ~ genus/tax1, strata = samp_data$genus, data = samp_data)
+adonis(matrix ~ genus/substrat, strata = samp_data$genus, data = samp_data)
+adonis(matrix ~ genus/site, strata = samp_data$genus, data = samp_data)
+```
+
+#### *Scarus ghobban*
+Finally, the only herbivorous species which was in both type of reefs was the Scarus ghobban, who eats the epilithic part of the coral, searching for crustalose calcarous algae. 
+
+```{r SCG wd, echo = T, eval= T, warning = F, message= F }
+dir_data_cleaning <- paste0(path,"/analyses/04_data_cleaning/Fish/Shift/SCG/")
+dir.create(dir_data_cleaning, recursive = T)
+
+SCG <- subset_samples(sey_gut, tax1 == "Scarus ghobban")
+SCG <- prune_taxa(names(which(colSums(SCG@otu_table)>0)), SCG)
+save(SCG, file = paste0(dir_data_cleaning, "SCG.RData"))
+SCGrff <- prune_samples(sample_sums(SCG) >= min(sample_sums(SCG)), SCG)
+SCGrff <- rarefy_even_depth(SCGrff, sample.size = min(sample_sums(SCG)))
+save(SCGrff, file = paste0(dir_data_cleaning, "SCGrff_ps.RData"))
+core_SCG <- subset_samples(sey_gut_core, tax1 == "Scarus ghobban")
+core_SCG <- prune_taxa(names(which(colSums(core_SCG@otu_table)>0)), core_SCG)
+save(core_SCG, file = paste0(dir_data_cleaning, "core_SCG.RData"))
+```
+
+##### Alpha and beta diversity
+```{r alpha SCG, echo = T, eval= T, warning = F, message= F, fig.align= "center"}
+box1 = plot_richness(SCGrff , measures = c("Observed","Shannon") , color = "geomorpho")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkblue","darkred")
+sey_SCG_alpha_div=  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 24, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), 
+              map_signif_level = TRUE, textsize=5, color="black", family = "serif")
+
+sey_SCG_alpha_div
+
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+```{r beta SCG, echo = T, eval= T, warning = F, message= F, fig.align= "center"}
+core_SCG_rel <- transform_sample_counts(core_SCG, function(x) x / sum(x) )
+save(core_SCG_rel , file = paste0(dir_data_cleaning, "core_SCG_rel.RData"))
+# _____ PCOA coda & permanova ------
+matrix <- vegdist(core_SCG_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_SCG_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+#write.table(samp_data, file = paste0(dir_data_cleaning, "samp_data.txt"), sep= "\t", quote= F)
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_SCG <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = geomorpho), alpha = 0.7, size = 8, shape = 16) +
+  scale_color_manual(values = c("Darkblue","Darkred"))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Reef")
+pcoa_SCG
+```
+
+We test the effect of the reef at host level. 
+
+```{r permanova1 SCG  ,echo = T, eval= T, warning = F, message= F }
+adonis(matrix ~ geomorpho, data = samp_data)
+```
+
+Even if we can't test the effect of the reef on the other herbivores family, we can test the site, island and substrat effect on the Siganidae. 
+
+#### Siganidae family
+##### Beta diversity
+```{r siganidae wd, echo = T, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/Siganidae/")
+dir.create(dir_data_cleaning, recursive = T)
+
+siganidae_ps <- subset_samples(sey_gut, family == "Siganidae")
+siganidae_ps <- prune_taxa(names(which(colSums(siganidae_ps@otu_table)>0)), siganidae_ps)
+save(siganidae_ps, file = paste0(dir_data_cleaning, "siganidae_ps.RData"))
+siganidaerff <- prune_samples(sample_sums(siganidae_ps) >= min(sample_sums(siganidae_ps)) , siganidae_ps)
+siganidaerff <- rarefy_even_depth(siganidae_ps ,min(sample_sums(siganidae_ps)))
+save(siganidaerff , file = paste0(dir_data_cleaning, "siganidaerff.RData"))
+sig_core <- subset_samples(sey_gut_core, family == "Siganidae")
+sig_core <- prune_taxa(names(which(colSums(sig_core@otu_table)>0)), sig_core)
+save(sig_core, file = paste0(dir_data_cleaning, "sig_core.RData"))
+
+```
+
+```{r beta div siganidae, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+sig_core_rel <- transform_sample_counts(sig_core, function(x) x / sum(x) )
+save(sig_core_rel  , file = paste0(dir_data_cleaning, "sig_core_rel.RData"))
+
+matrix <- vegdist(sig_core_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(sig_core_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+#write.table(samp_data, file = paste0(dir_data_cleaning, "samp_data.txt"), quote = F, sep = "\t")
+hull <- cbind(pcoa_coord, samp_data)
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_sig <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = tax1, shape = site),alpha = 0.7, size = 8) +
+  scale_shape_manual(values = c(18,15,16,17))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Species", shape =  "Site")
+pcoa_sig
+```
+
+```{r permanova1 sig,echo = T, eval= T, warning = F, message= F }
+adonis(matrix ~ tax1,data = samp_data)
+adonis(matrix ~ island, data = samp_data)
+adonis(matrix ~ site, data = samp_data)
+adonis(matrix ~ substrat, data = samp_data)
+```
+
+#### **Carnivores**
+#### Carnivorous community
+
+Now let's see the influence of the shift on the carnivores which were more ubiquitous between sites and reef conditions. 
+
+```{r carnivores wd, echo = T, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/Carnivores/")
+dir.create(dir_data_cleaning, recursive = T)
+```
+We need to subset from the `sey_gut` phyloseq object the carnivorous fishes. 
+
+```{r carn physeq creation ,echo = T, eval= T, warning = F, message= F }
+carn_ps <- subset_samples(sey_gut, diet3 == "Carnivorous")
+carn_ps <- prune_taxa(names(which(colSums(carn_ps@otu_table)>0)), carn_ps)
+save(carn_ps, file = paste0(dir_data_cleaning, "carn_ps.RData"))
+rff_carn <- prune_samples(sample_sums(carn_ps) >= min(sample_sums(carn_ps)) , carn_ps)
+rff_carn <- rarefy_even_depth(carn_ps ,min(sample_sums(carn_ps)))
+save(rff_carn , file = paste0(dir_data_cleaning, "rff_carn.RData"))
+carn_core <- subset_samples(sey_gut_core, diet3 == "Carnivorous")
+carn_core <- prune_taxa(names(which(colSums(carn_core@otu_table)>0)), carn_core)
+save(carn_core, file = paste0(dir_data_cleaning, "carn_core.RData"))
+```
+
+##### Alpha and beta diversity
+
+```{r alpha beta carn, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+box1 = plot_richness(rff_carn , measures = c("Observed","Shannon") , color = "geomorpho")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkblue","darkred")
+
+sey_carn_alpha_div=  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 24, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), map_signif_level = TRUE, textsize=5, color="black", family = "serif")
+
+sey_carn_alpha_div 
+
+# ____ Test MW ----
+library(pgirmess)
+# Does exist differences in diversity between types of host? 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+```{r beta carn , echo = T, eval= T, warning = F, message= F, fig.align="center"}
+core_carn_rel <- transform_sample_counts(carn_core, function(x) x / sum(x) )
+save(core_carn_rel  , file = paste0(dir_data_cleaning, "core_carn_rel.RData"))
+
+matrix <- vegdist(core_carn_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_carn_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+#write.table(samp_data, file = paste0(dir_data_cleaning, "samp_data.txt"), quote = F, sep = "\t")
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_carn <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = geomorpho, shape = family), alpha = 0.7, size = 8) +
+  scale_color_manual(values = palette)+
+  scale_shape_manual(values =c(15:18, 8))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Reef", shape= "Family")
+pcoa_carn
+
+```
+
+We tested first the influence of the environment
+```{r permanova1 carn, echo = T, eval= T, warning = F, message= F }
+adonis(matrix ~ island,  data = samp_data)
+adonis(matrix ~ geomorpho,  data = samp_data)
+adonis(matrix ~ site,  data = samp_data)
+adonis(matrix ~ substrat,  data = samp_data)
+```
+
+And then the taxonomic effect
+
+```{r permanova2 carn, echo = T, eval= T, warning = F, message= F}
+adonis(matrix ~ family,  data = samp_data)
+adonis(matrix ~ family/genus/tax1 ,  data =samp_data)
+```
+
+#### Lutjanidae family
+##### Alpha and beta diversity
+```{r lutjanidae wd, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/Lutjanidae/")
+dir.create(dir_data_cleaning, recursive = T)
+
+lutj_ps <- subset_samples(sey_gut, family == "Lutjanidae")
+lutj_ps <- prune_taxa(names(which(colSums(lutj_ps@otu_table)>0)), lutj_ps)
+save(lutj_ps, file = paste0(dir_data_cleaning, "lutj_ps.RData"))
+rff_lutj <- prune_samples(sample_sums(lutj_ps) >= min(sample_sums(lutj_ps)) , lutj_ps)
+rff_lutj <- rarefy_even_depth(lutj_ps ,min(sample_sums(lutj_ps)))
+save(rff_lutj , file = paste0(dir_data_cleaning, "rff_lutj.RData"))
+core_lutj <- subset_samples(sey_gut_core, family == "Lutjanidae")
+core_lutj <- prune_taxa(names(which(colSums(core_lutj@otu_table)>0)), core_lutj)
+save(core_lutj, file = paste0(dir_data_cleaning, "core_lutj.RData"))
+
+# __ Alpha diversity ----
+box1 = plot_richness(rff_lutj , measures = c("Observed","Shannon") , color = "geomorpho")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkblue","darkred")
+
+sey_lutj_alpha_div=  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 24, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), map_signif_level = TRUE, textsize=5, color="black", family = "serif")
+sey_lutj_alpha_div 
+
+# ____ Test MW ----
+library(pgirmess)
+# Does exist differences in diversity between types of host? 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+
+```
+
+```{r Beta-div Lutjanidae, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+core_lutj_rel <- transform_sample_counts(core_lutj, function(x) x / sum(x) )
+save(core_lutj_rel  , file = paste0(dir_data_cleaning, "core_lutj_rel.RData"))
+# _____ PCOA coda & permanova ------
+library(vegan)
+library(ape)
+matrix <- vegdist(core_lutj_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_lutj_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+#write.table(samp_data, file = paste0(dir_data_cleaning, "samp_data.txt"), sep = "\t", quote = F)
+
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_lutj <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = geomorpho), alpha = 0.7, size = 8, shape = 16) +
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  scale_colour_manual(values= palette)+
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Reef")
+pcoa_lutj
+```
+
+The sampling size for the members of the Lutjanidae family was enough to test several parameters as effect of species, genus, geomorphology of the reef, site and substrat.
+
+```{r permanova1 lutj, echo = T, eval= T, warning = F, message= F}
+adonis(matrix ~ tax1,  data = samp_data)
+adonis(matrix ~ genus,  data = samp_data)
+adonis(matrix ~ geomorpho,  data = samp_data)
+adonis(matrix ~ site,  data = samp_data)
+adonis(matrix ~ substrat,  data = samp_data)
+
+beta_reef <- betadisper(matrix, samp_data$tax1)
+permutest(beta_reef)
+```
+
+In this family, we could test at host level the effect on the species *Aprion virescens*.
+
+#### *Aprion virescens*
+##### Alpha and beta diversity
+
+```{r APV wd, echo = T, eval= T, warning = F, message= F }
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/APV/")
+dir.create(dir_data_cleaning, recursive = T)
+
+APV <- subset_samples(sey_gut, tax1 == "Aprion virescens")
+APV <- prune_taxa(names(which(colSums(APV@otu_table)>0)), APV)
+save(APV, file = paste0(dir_data_cleaning, "APV.RData"))
+APVrff <- prune_samples(sample_sums(APV) >= min(sample_sums(APV)), APV)
+APVrff <- rarefy_even_depth(APVrff, sample.size = min(sample_sums(APV)))
+save(APVrff, file = paste0(dir_data_cleaning, "APVrff_ps.RData"))
+core_APV <- subset_samples(sey_gut_core, tax1 == "Aprion virescens")
+core_APV <- prune_taxa(names(which(colSums(core_APV@otu_table)>0)),core_APV)
+save(core_APV, file = paste0(dir_data_cleaning, "core_APV.RData"))
+```
+
+```{r alpha diversity APV, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+box1 = plot_richness(APVrff , measures = c("Observed","Shannon") , color = "geomorpho")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkblue","darkred")
+
+sey_APV_alpha_div=  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 20, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), map_signif_level = TRUE, textsize=8, color="black", family = "serif")
+
+sey_APV_alpha_div 
+
+# ____ Test MW ----
+library(pgirmess)
+# Does exist differences in diversity between types of host? 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+
+#### Lethrinidae
+##### Alpha and beta diversity
+```{r lethrinidae wd, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/Lethrinus/")
+dir.create(dir_data_cleaning, recursive = T)
+
+sey_leth <- subset_samples(sey_gut, family == "Lethrinidae")
+sey_leth <- prune_taxa(names(which(colSums(sey_leth@otu_table)>0)), sey_leth)
+save(sey_leth, file = paste0(dir_data_cleaning, "sey_leth.RData"))
+rff_leth <- prune_samples(sample_sums(sey_leth) >= min(sample_sums(sey_leth)) , sey_leth)
+rff_leth <- rarefy_even_depth(rff_leth ,min(sample_sums(rff_leth)))
+save(rff_leth , file = paste0(dir_data_cleaning, "rff_leth.RData"))
+core_leth <- subset_samples(sey_gut_core, genus == "Lethrinus")
+core_leth <- prune_taxa(names(which(colSums(core_leth@otu_table)>0)),core_leth)
+save(core_leth, file = paste0(dir_data_cleaning, "core_leth.RData"))
+```
+
+```{r alpha div lethrinidae , echo = T, eval= T, warning = F, message= F, fig.align="center"}
+box1 = plot_richness(rff_leth , measures = c("Observed","Shannon") , color = "geomorpho")
+box1$data
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkblue","darkred")
+
+sey_lethr_alpha_div=  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 24, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), map_signif_level = TRUE, textsize=5, color="black", family = "serif")
+
+sey_lethr_alpha_div 
+
+# ____ Test MW ----
+library(pgirmess)
+# Does exist differences in diversity between types of host? 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+
+```{r beta div lethrinidae, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+core_leth_rel <- transform_sample_counts(core_leth, function(x) x / sum(x) )
+save(core_leth_rel  , file = paste0(dir_data_cleaning, "core_leth_rel.RData"))
+# _____ PCOA coda & permanova ------
+library(vegan)
+library(ape)
+matrix <- vegdist(core_leth_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_leth_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+#write.table(samp_data, file = paste0(dir_data_cleaning, "samp_data.txt"), quote = F, sep = "\t")
+
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_lethr <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = geomorpho), alpha = 0.7, size = 8, shape = 16) +
+  scale_color_manual(values = c("Darkblue","Darkred"))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Reef")
+pcoa_lethr
+```
+
+```{r permanova lethrinidae,echo = T, eval= T, warning = F, message= F, fig.align="center"}
+adonis(matrix ~ tax1 , data = samp_data)
+adonis(matrix ~ island, data = samp_data)
+adonis(matrix ~ geomorpho, data = samp_data)
+adonis(matrix ~ substrat, data = samp_data)
+adonis(matrix ~ site, data = samp_data)
+```
+
+Inside this family, we are able to test two different species : *Lethrinus mahsena* and  *Lethrinus enigmaticus*. 
+
+#### *Lethrinus mahsena*
+##### Alpha and beta diversity
+
+```{r wd LEM, echo = T, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/LEM/")
+dir.create(dir_data_cleaning, recursive = T)
+
+LEM <- subset_samples(sey_gut, tax1 == "Lethrinus mahsena")
+LEM <- prune_taxa(names(which(colSums(LEM@otu_table)>0)), LEM)
+save(LEM, file = paste0(dir_data_cleaning, "LEM.RData"))
+LEMrff <- prune_samples(sample_sums(LEM) >= min(sample_sums(LEM)) , LEM)
+LEMrff <- rarefy_even_depth(LEMrff ,min(sample_sums(LEMrff)))
+save(LEMrff , file = paste0(dir_data_cleaning, "LEMrff.RData"))
+core_LEM <- subset_samples(sey_gut_core, tax1 == "Lethrinus mahsena")
+core_LEM <- prune_taxa(names(which(colSums(core_LEM@otu_table)>0)), core_LEM)
+save(core_LEM, file = paste0(dir_data_cleaning, "core_LEM.RData"))
+```
+
+```{r alpha div LEM, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+box1 = plot_richness(LEMrff , measures = c("Observed","Shannon") , color = "geomorpho")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkblue","darkred")
+
+sey_LEM_alpha_div=  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 24, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), map_signif_level = TRUE, textsize=5, color="black", family = "serif")
+
+sey_LEM_alpha_div 
+# ____ Test MW ----
+library(pgirmess)
+# Does exist differences in diversity between types of host? 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+```{r beta-div LEM, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+core_LEM_rel <- transform_sample_counts(core_LEM, function(x) x / sum(x) )
+save(core_LEM_rel  , file = paste0(dir_data_cleaning, "core_LEM_rel.RData"))
+# _____ PCOA coda & permanova ------
+library(vegan)
+library(ape)
+matrix <- vegdist(core_LEM_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_LEM_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_LEM <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = geomorpho), alpha = 0.7, size = 8, shape = 16) +
+  scale_color_manual(values = c("darkblue","darkred"))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Reef")
+pcoa_LEM
+```
+
+For this species, we can only test the geomorpho and site effect. 
+
+```{r permanova LEM, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+adonis(matrix ~ geomorpho, data = samp_data)
+adonis(matrix ~ site, data = samp_data)
+```
+
+#### *Lethrinus enigmaticus*
+##### Alpha and beta diversity
+
+```{r wd LEE, echo = T, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Shift/LEE/")
+dir.create(dir_data_cleaning, recursive = T)
+
+LEE <- subset_samples(sey_gut, tax1 == "Lethrinus mahsena")
+LEE <- prune_taxa(names(which(colSums(LEE@otu_table)>0)), LEE)
+save(LEE, file = paste0(dir_data_cleaning, "LEE.RData"))
+LEErff <- prune_samples(sample_sums(LEE) >= min(sample_sums(LEE)) , LEE)
+LEErff <- rarefy_even_depth(LEErff ,min(sample_sums(LEErff)))
+save(LEErff , file = paste0(dir_data_cleaning, "LEErff.RData"))
+core_LEE <- subset_samples(sey_gut_core, tax1 == "Lethrinus mahsena")
+core_LEE <- prune_taxa(names(which(colSums(core_LEE@otu_table)>0)), core_LEE)
+save(core_LEE, file = paste0(dir_data_cleaning, "core_LEE.RData"))
+```
+
+```{r alpha div LEE, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+box1 = plot_richness(LEErff , measures = c("Observed","Shannon") , color = "geomorpho")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable)= c("Observed richness","Shannon (ENS)")
+levels(box1$data$geomorpho) = c("C" , "M")
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkblue","darkred")
+
+sey_LEE_alpha_div=  ggplot(box1$data, aes(x = factor(geomorpho) , y = value, color = factor(geomorpho))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) +
+  scale_colour_manual(values= palette) + theme_bw()+
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 24, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free") +
+  geom_signif(comparisons = list(c("C", "M")), map_signif_level = TRUE, textsize=5, color="black", family = "serif")
+
+sey_LEE_alpha_div 
+# ____ Test MW ----
+library(pgirmess)
+# Does exist differences in diversity between types of host? 
+# ____________ Observed richness MW 
+MW.obs = wilcox.test(box1$data$value[box1$data$variable=="Observed richness"]~box1$data$geomorpho[box1$data$variable=="Observed richness"])
+MW.obs = cbind(MW.obs$statistic, MW.obs$p.value)
+# ____________ Shannon number MW 
+MW.shannon = wilcox.test(box1$data$value[box1$data$variable=="Shannon (ENS)"]~box1$data$geomorpho[box1$data$variable=="Shannon (ENS)"])
+MW.shannon =cbind(MW.shannon$statistic, MW.shannon$p.value)
+# ____________ All computed 
+MW.test <- rbind(MW.obs, MW.shannon)
+rownames(MW.test) = c("Observed richness","Shannon (ENS)")
+colnames(MW.test) = c('W stat' , 'p-value')
+MW.test
+```
+
+```{r beta-div LEE, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+core_LEE_rel <- transform_sample_counts(core_LEE, function(x) x / sum(x) )
+save(core_LEE_rel  , file = paste0(dir_data_cleaning, "core_LEE_rel.RData"))
+# _____ PCOA coda & permanova ------
+library(vegan)
+library(ape)
+matrix <- vegdist(core_LEE_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_LEE_rel))
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_LEE <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = geomorpho), alpha = 0.7, size = 8, shape = 16) +
+  scale_color_manual(values = c("darkblue","darkred"))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Reef")
+pcoa_LEE
+```
+
+For this species, we can only test the geomorpho and site effect. 
+
+```{r permanova LEE, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+adonis(matrix ~ geomorpho, data = samp_data)
+```
+
+
+#### Conclusion
+<style>
+div.blue { background-color:#FBDFB4; border-radius: 5px; padding: 20px;}
+</style>
+<div class = "blue">
+<font size="4"> Finally, it seems that the shift coral - macroalgae doesn't impact the enteric core microbiome of the reef fish while the core epiphyte is influenced by the environmental parameters as geomorphology, substrat and location. This has already been described in other studies relating on the microbiomes of algae ( [Serebryakova et al., 2018](https://doi.org/10.1371/journal.pone.0206734)). A very weak signal is detected for the herbivores *Scarus ghobban* and would have maybe been significant with a higher sampling size. Moreover, the observed changes in the diversity and bacterial compositions associated to primary producers with *Sargassum* and turf algae, which hold a pivotal role as major nutritional resources for Siganidae and Acanthuridae ( [Cheal et al., 2010](https://doi.org/10.1007/s00338-010-0661-y)), let us think to further consequences on the enteric microbial compositions of these latter. Nowadays, It is quite admitted that diet is one of the strongest determinant of fish enteric microbiomes. Moreover, some studies in aquaculture have demonstrated that a modification of the food quality markedly influences the variability and diversity of enteric microbiomes ( [Butt et al., 2019](https://doi.org/10.3389/fendo.2019.00009)). Also, as demonstrated in zebrafish hosts, the absence or decreasing availability of food may cause a stress and act as an important factor of the variability of the enteric microbiome even dysbiosis ( [Cantas et al., 2012](https://doi.org/10.1089/zeb.2011.0712)). 
+The resistence of the enteric microbiome against environmental perturbation (modification/absence of the diet because of habitat fragmentation or anthropogenization) has been observed in non human primate in Africa where the species identity remained the strongest determinant ( [McCord et al., 2014](https://doi.org/10.1002/ajp.22238)).
+In our case, what are thus the stronger determinants that influence the enteric core microbiome? 
+</div>
+
+
+<a id="Part VI: Other drivers of enteric microbial communities"></a> 
+
+## Part VI: Other drivers of enteric microbial communities
+[back to top](#back to top)
+
+The diet and the taxonomy are known to be major drivers of the microbial assemblage in the gut of  fishes. We have seen previously some effect at different scale. Here, we will describe and determine which are the differences between the diversity of the differnt types of diet and families and try to detect some biomarkers which could play a functional role in the nutrition of the reef fish.
+
+```{r fish all wd ,echo = T, eval= T, warning = F, message= F }
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Core/A_div/")
+dir.create(dir_data_cleaning)
+```
+
+Let's see at granulous scale of diet :Herbivorous vs carnivorous with the 3 omnivorous fishes considered as herbivorous. 
+
+#### Alpha and beta diversity 
+```{r alpha div diet,echo = T, eval= T, warning = F, message= F, fig.align="center" }
+# ____ Shannon (ENS), Faith PD and LCBD ----
+levels(sample_data(seyrff_gut)$diet3)[3] = "Herbivorous"
+box1 = plot_richness(seyrff_gut , measures = c("Observed","Shannon") , color = "diet3")
+# ____ Shannon index (ENS)
+box1$data[box1$data$variable == "Shannon",]$value = exp(box1$data[box1$data$variable == "Shannon",]$value)
+levels(box1$data$variable) = c("Observed richness", "Shannon (ENS)")
+
+library(ggsignif)
+library(ggplot2)
+palette = c("darkred" , "darkgreen")
+
+sey_alpha_div_diet =  ggplot(box1$data, aes(x = factor(diet3) , y = value, color = factor(diet3))) + 
+  geom_jitter(position = position_jitter(width = .20), alpha = 0.5, size = 3) + theme_bw() +
+  geom_boxplot(alpha=0.1, outlier.colour = NA) + 
+  scale_color_manual(values = palette)+
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(family = "serif",size = 14), 
+        axis.text.x = element_text(family = "serif",size = 15, angle = 0),
+        axis.text.y = element_text(family = "serif",size = 20, angle = 0),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position="none",
+        strip.text.x = element_text(size=15, family = "serif")) + 
+  geom_signif(comparisons = list(c("Carnivorous", "Herbivorous")), map_signif_level = TRUE, textsize=5, color="black", family = "serif")+
+  facet_wrap( ~ variable, nrow=1, ncol=5, scales = "free")
+sey_alpha_div_diet
+
+
+# ____ Dunn test ----
+library(pgirmess)
+library(dunn.test)
+# Does exist differences in diversity between diets? 
+# ____________ Observed dunn 
+dunn.test(box1$data$value[box1$data$variable=="Observed richness"],box1$data$diet1[box1$data$variable=="Observed richness"], method = "bonferroni")
+# ____________ Shannon number dunn 
+dunn.test(box1$data$value[box1$data$variable=="Shannon (ENS)"],box1$data$diet1[box1$data$variable=="Shannon (ENS)"], method = "bonferroni")
+```
+
+```{r beta div diet , echo = T, eval= T, warning = F, message= F, fig.align="center"}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Core/B_div/")
+dir.create(dir_data_cleaning)
+
+core_gut_rel <- transform_sample_counts(sey_gut_core, function(x) x / sum(x) )
+save(core_gut_rel  , file = paste0(dir_data_cleaning, "core_gut_rel.RData"))
+# _____ PCOA coda & permanova ------
+library(vegan)
+library(ape)
+matrix <- vegdist(core_gut_rel@otu_table, method = "bray")
+save(matrix, file = paste0(dir_data_cleaning, "beta_matrices.RData"))
+pcoa.sub <- pcoa(matrix)
+save(pcoa.sub, file = paste0(dir_data_cleaning, "pcoa.values.RData"))
+
+# Contruction of the table for graphic 
+pcoa_coord <- pcoa.sub$vectors[,1:3]
+# _____ PCOA Plot-----
+library(stringr)
+samp_data <- data.frame(sample_data(core_gut_rel))
+levels(samp_data$diet3) <- c("Carnivorous", "Herbivorous","Herbivorous")
+save(samp_data,file = paste0(dir_data_cleaning, "samp_data.RData"))
+#write.table(samp_data, file = paste0(dir_data_cleaning, "samp_data.txt"), quote = F, sep = "\t")
+hull <- cbind(pcoa_coord, samp_data)
+hull$geomorpho <- str_replace_all(hull$geomorpho, c("macroalgal"= "M" , "coral"="C"))
+
+# What is the percentage of the explicative variance? 
+paste("Axis 1 :",percent(pcoa.sub$values$Relative_eig[1])) 
+paste("Axis 2 :",percent(pcoa.sub$values$Relative_eig[2])) 
+paste("Axis 3 :",percent(pcoa.sub$values$Relative_eig[3]))
+paste("Axis 4 :",percent(pcoa.sub$values$Relative_eig[4]))
+
+pcoa_diet1 <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = diet1), alpha = 0.7, size = 8) +
+  scale_color_manual(values =  c("Darkred", "Darkgreen","Darkkhaki","Darkorange","Darkorchid"))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Diet")
+pcoa_diet1
+
+pcoa_diet3 <- ggplot() +
+  geom_hline(yintercept=0, colour="lightgrey", linetype = 2) +
+  geom_vline(xintercept=0, colour="lightgrey", linetype = 2) +
+  geom_point(data = hull, aes(x=Axis.1, y=Axis.2, color = diet3), alpha = 0.7, size = 8) +
+  scale_color_manual(values = c("Darkred", "Darkgreen"))+
+  xlab(paste("PCo1 (", round(pcoa.sub$values$Relative_eig[1]*100, 1), "%)")) +
+  ylab(paste("PCo2 (", round(pcoa.sub$values$Relative_eig[2]*100, 1), "%)"))  +
+  theme_bw() +
+  coord_equal() +
+  theme(axis.title.x = element_text(size=20, family = "serif"), # remove x-axis labels
+        axis.title.y = element_text(size=20 , family = "serif"),
+        axis.text.x = element_text(size = 18, family = "serif"), 
+        axis.text.y = element_text(size = 18, family = "serif"),
+        legend.text = element_text(size = 16, family = "serif"),
+        legend.title = element_text(size = 16,family = "serif"), # remove y-axis labels
+        panel.background = element_blank(),
+        panel.grid.major = element_blank(),  #remove major-grid labels
+        panel.grid.minor = element_blank(),  #remove minor-grid labels
+        plot.background = element_blank(),
+        axis.title = element_text(size = 25))+
+  labs(colour = "Diet")
+pcoa_diet3
+```
+
+The herbivores and carnivores seem to compose two different clusters well defined. Let's test the influence of the diet: 
+
+```{r permanova diet , echo = T, eval= T, warning = F, message= F, fig.align="center"}
+# Between diets
+adonis(matrix ~ diet1, data = samp_data)
+```
+The taxonomy can also play a role in the determination of the microbial composition, so what is the effect of the taxonomy? 
+```{r permanova family, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+# Between families
+adonis(matrix ~ tax1, data = samp_data)
+```
+
+To test the effect of the diet inside a taxonomic level, we freeze the diet and see what is the effect of the family, and inside the family, the effect of the genus, and inside a genus, the effect of a species. Actually, we tested the effect between species and genus, sharing the same family, with the effect of the diet blocked (in case of different diet inside family which can occur between piscivorous and invertivores in the Lutjanidae family).
+
+```{r permanova cascade, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+adonis(matrix ~  diet3/family / genus / tax1, strata = samp_data$diet3, data = samp_data) 
+```
+
+#### LEfSe between diet
+To detect now biomarkers in herbivores and carnivores, we apply an discriminant analysis with LEfsE analysis. 
+
+```{r LDA wd2, echo= F, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Core/LDA/")
+dir.create(dir_data_cleaning, recursive = T)
+```
+
+```{r LEfSe preparation data2, echo= F, eval= T, warning = F, message= F}
+sey_gut.genus <- tax_glom(sey_gut_core, "Genus", NArm = TRUE) #merges species that have the same Genus + filtre Genres NA
+sey_gut.genus@sam_data$diet3[sey_gut.genus@sam_data$diet3 == "Omnivorous"] <- "Herbivorous"
+
+# ____ LEfSE file creation  ----
+taxo = data.frame(tax_table(sey_gut.genus))
+tax_name <- paste(taxo$Domain, taxo$Phylum, taxo$Class, taxo$Order, taxo$Family, taxo$Genus,  sep="|")
+tax_name2 <- c("diet3",tax_name)
+save(taxo, tax_name2, file=paste0(dir_data_cleaning , "sey_gut.genus_taxo.RData"))
+
+samp_data <- data.frame(sample_data(sey_gut.genus))
+diet_lefse <- data.frame(samp_data[,12], stringsAsFactors = FALSE)
+otu = data.frame(otu_table(sey_gut.genus))
+# On diet
+lefse <- cbind(diet_lefse, otu)
+lefse2 <- cbind(tax_name2,t(lefse))
+write.table(lefse2, file=paste0(dir_data_cleaning, "lefse_diet_sey.txt"), 
+            sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+# Run your file in LEfSE software on Galaxy, download the results, move it on your active folder "dir_data_cleaning" and rename the file "LDA_results".
+
+```
+
+Proceed the "lefse_type_sey.txt" in a LEfse Galaxy and retrieve data "LDA Effect Size" with the associated "Plot LEfSe Results" in the LDA folder.You have to rename the former file "LDA_results" and run the following code. 
+
+```{r write LDA results2,echo = T, eval= T, warning = F, message= F} 
+library(plyr)
+LDA_Effect_Size <- read.delim(paste0(dir_data_cleaning, "LDA_results"), header=FALSE)
+LDA_carn <- subset(LDA_Effect_Size , LDA_Effect_Size$V3 == "Carnivorous")
+LDA_herb <- subset(LDA_Effect_Size , LDA_Effect_Size$V3 == "Herbivorous")
+LDA_diet <- rbind(LDA_carn,LDA_herb)
+LDA_phylum <- LDA_diet$V1
+names(LDA_phylum) <- as.factor(".Phylum.Class.Order.Family.Genus") #paste the names(LDA_phylum) in excel
+#write.table(LDA_phylum, file=paste0(dir_data_cleaning, "LDA_phylum.txt"), sep="\t", row.names=F, col.names=F, quote=FALSE)
+library(readr)
+LDA_phylum <- read_delim(paste0(dir_data_cleaning, "LDA_phylum.txt"), 
+                         ".", escape_double = FALSE, col_types = cols(X1 = col_skip()), 
+                         trim_ws = TRUE)
+LDA_phylum_diet <- cbind(LDA_phylum , LDA_diet[,2:5])
+colnames(LDA_phylum_diet) <- c(names(LDA_phylum)[1:5] , "LDA_res" , "Diet" , "LDA_res2" , "sig")
+write.table(LDA_phylum_diet, file=paste0(dir_data_cleaning, "LDA_phylum_diet.txt"), sep="\t", row.names=F, col.names=T, quote=FALSE)
+
+# Select your significativ value and taxa
+LEFSE_sig <- subset(LDA_phylum_diet, LDA_phylum_diet$LDA_res2 >= 3)
+LEFSE_sig_genus <- subset(LEFSE_sig, LEFSE_sig$Genus %in% as.character(na.exclude(LEFSE_sig$Genus)))
+LEFSE_sig_genus_vec <- paste(LEFSE_sig_genus$Phylum, LEFSE_sig_genus$Class, LEFSE_sig_genus$Order, LEFSE_sig_genus$Family, LEFSE_sig_genus$Genus, sep = "|")
+
+biomarkers <- paste(LEFSE_sig_genus$Order, LEFSE_sig_genus$Genus, sep = "|")
+save(biomarkers, file = paste0(dir_data_cleaning, "biomarkers.RData"))
+
+sey_samp <- sey_gut.genus@sam_data
+write.table(sey_samp, file=paste0(dir_data_cleaning, "sey_samp.txt"), sep="\t", row.names=F, col.names=T, quote=FALSE)
+levels(sample_data(sey_gut.genus)$diet3) <- c("Carnivorous", "Herbivorous","Herbivorous")
+
+physeq_phylum <- sey_gut.genus %>%    
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%  
+  filter(Abundance > 0) %>% # Melt to long format
+  arrange(Genus)
+
+physeq_phylum$Abundance <- physeq_phylum$Abundance/nrow(sample_data(sey_gut.genus))
+
+physeq_phylum$tax <- paste(physeq_phylum$Phylum, physeq_phylum$Class, physeq_phylum$Order, physeq_phylum$Family, physeq_phylum$Genus, sep = "|")
+save(physeq_phylum, file= paste0(dir_data_cleaning, "physeq_phylum.RData"))
+#write.table(physeq_phylum ,file = paste0(dir_data_cleaning, "physeq_phylum.txt"), sep="\t",quote = F)
+
+Diet_Pol_sey <- physeq_phylum
+Diet_Pol_sey$tax <-  paste(Diet_Pol_sey$Order, Diet_Pol_sey$Genus, sep = "|")
+length(physeq_phylum$tax)
+
+df_sey <- Diet_Pol_sey[,c("diet3","tax3","tax","Abundance")]
+colnames(df_sey) <- c("family","item","score","value")
+save(df_sey, file = paste0(dir_data_cleaning, "df_sey.RData"))
+```
+
+Let's organize our data to plot corresponding colours depending on the  compartment. 
+
+```{r polarhistogram on diet, echo = T, eval= T, warning = F, message= F}
+dir_data_cleaning <- paste0(path, "/analyses/04_data_cleaning/Fish/Core/LDA/")
+load(paste0(dir_data_cleaning, "biomarkers.RData"))
+load(paste0(dir_data_cleaning, "df_sey.RData"))
+library(plyr)
+print_biomarkers <- levels(factor(df_sey[df_sey$score %in% biomarkers,]$score)) # All biomarkers present in the sey.diet_genus RData file
+others <- levels(factor(df_sey[!df_sey$score %in% biomarkers,]$score)) # All taxa which are not biomarkers
+df_sey[!df_sey$score %in% biomarkers,]$score <- "Z-Other" # Call them other (Z to figure at the end of the list)
+
+# Some biomarkers are in common so Output the frequences.
+freq_herb <- table(df_sey[df_sey$family == "Herbivorous",]$score)/length(df_sey[df_sey$family == "Herbivorous",]$score)*100 
+freq_herb <- freq_herb[!names(freq_herb) == "Z-Other"]
+freq_carn <- table(df_sey[df_sey$family == "Carnivorous",]$score)/length(df_sey[df_sey$family == "Carnivorous",]$score)*100 
+freq_carn <- freq_carn[!names(freq_carn) == "Z-Other"]
+
+# Keep the common biomarkers of the herbivorous and carnivorous and the respective frequencies in each compartment
+biom_common <- names(freq_herb[which(names(freq_herb) %in% names(freq_carn))])
+freq_herb_common <- as.data.frame(freq_herb[names(freq_herb) %in% biom_common])
+freq_carn_common <- as.data.frame(freq_carn[names(freq_carn) %in% biom_common])
+freq_common <- cbind(freq_herb_common, freq_carn_common$Freq)
+colnames(freq_common) <- c("Biomarkers", "Freq_herb" ,"Freq_carn")
+# Class the biomarkers in the compartment where the value is the higher
+biom_herb_to_keep <- freq_common$Biomarkers[which(freq_common$Freq_herb > freq_common$Freq_carn, T)]
+biom_carn_to_keep <- freq_common$Biomarkers[which(freq_common$Freq_carn > freq_common$Freq_herb, T)]
+# See which are the biomarkers for the herbivorous and which are the biomarkers for the carnivorous
+biom_herb <- levels(factor(df_sey[df_sey$family == "Herbivorous",]$score))
+biom_herb <- biom_herb[!biom_herb == "Z-Other"]
+biom_herb <- biom_herb[!biom_herb %in% biom_carn_to_keep]
+biom_carn <- levels(factor(df_sey[df_sey$family == "Carnivorous",]$score))
+biom_carn <- biom_carn[!biom_carn == "Z-Other"]
+biom_carn <- biom_carn[!biom_carn %in% biom_herb_to_keep]
+
+# Color choice
+herb_colors <- c("yellow" , "darkkhaki", "darkolivegreen",
+                  "darkolivegreen2","gold4","chartreuse",
+                  "aquamarine","darkgreen", "darkcyan",
+                  "darkseagreen", "gold3", "darkslategray")
+                 
+pie(rep(1, 12), col= herb_colors)
+
+carn_colors <- c("darkred","darksalmon","darkorchid4",
+                "blueviolet","darkblue",
+                "blue3", "brown1","deeppink")
+
+pie(rep(1, 8), col= carn_colors)
+
+polar_col <- c(carn_colors , herb_colors , 'Z_Other'="black")
+# Add a prefix H (for herbivorous) or C (for carnivorous) in their respectiv biomarkers. In this way, they will be listed following 
+# their respectiv compartment and no their names (easier for the add of the color in the ggplot)
+df_sey[df_sey$score %in% biom_herb,]$score <- paste("H",df_sey[df_sey$score %in% biom_herb,]$score, sep= "-")
+df_sey[df_sey$score %in% biom_carn,]$score <- paste("C",df_sey[df_sey$score %in% biom_carn,]$score, sep= "-")
+```
+
+
+```{r Print the polarhistogramm2, echo = T, eval= T, warning = F, message= F, fig.align="center"}
+source(paste0(dir_refdb, "polarHistogram.R"))
+p <- polarHistogram(df_sey , familyLabel=T, innerRadius = 0.2, spaceFamily =7, circleProportion = 0.85)
+p + ggplot2::scale_fill_manual(values= polar_col) +
+  theme(legend.text = element_text(family = "serif", size = 3)) +
+  theme(legend.position= "none") # to hide the legend because of the size
+```
